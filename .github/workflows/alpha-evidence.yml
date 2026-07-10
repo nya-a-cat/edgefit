@@ -20,9 +20,11 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
-          cache-dependency-path: tools/onnx-normalize/requirements.txt
-      - name: Install pinned ONNX dependency
-        run: python -m pip install -r tools/onnx-normalize/requirements.txt
+          cache-dependency-path: |
+            tools/onnx-normalize/requirements.txt
+            tools/onnx-normalize/requirements-runtime.txt
+      - name: Install pinned ONNX Runtime dependencies
+        run: python -m pip install -r tools/onnx-normalize/requirements-runtime.txt
       - name: Build EdgeFit
         run: cargo build --workspace --release --locked
       - name: Download and verify the two pinned real models
@@ -41,6 +43,13 @@ jobs:
             --repair-qlinear-global-average-pool pool10_1_quantized \
             --repair-out tmp/real_world_corpus/squeezenet1.0-12-int8-value-info.onnx \
             --out tmp/alpha-case/value-info-repair.json
+      - name: Verify repaired model runtime equivalence
+        run: |
+          python tools/onnx-normalize/runtime_smoke.py \
+            --reference-model tmp/real_world_corpus/squeezenet1.0-12-int8.onnx \
+            --candidate-model tmp/real_world_corpus/squeezenet1.0-12-int8-value-info.onnx \
+            --provider CPUExecutionProvider \
+            --out tmp/alpha-case/runtime-equivalence.json
       - name: Generate repeatable Alpha evidence
         run: |
           python tools/competitive-benchmark/benchmark.py \
