@@ -31,6 +31,11 @@ def main() -> int:
         help="Only verify this model ID; repeat the option to select multiple models.",
     )
     parser.add_argument(
+        "--file-integrity-only",
+        action="store_true",
+        help="Only verify downloaded model bytes and SHA-256; do not normalize the graph.",
+    )
+    parser.add_argument(
         "--repair-qlinear-global-average-pool",
         metavar="TENSOR",
         help="Add missing value_info for one QLinearGlobalAveragePool output.",
@@ -48,12 +53,25 @@ def main() -> int:
 
     selected_models = select_models(manifest["models"], args.model_id)
     validate_repair_arguments(args, selected_models)
-    normalize = load_normalize()
-    results = []
-    for item in selected_models:
-        results.append(verify_model(item, cache, args.download, normalize))
+    normalize = None if args.file_integrity_only else load_normalize()
+    if args.file_integrity_only:
+        results = [
+            verify_model_file_integrity(item, cache, args.download)
+            for item in selected_models
+        ]
+    else:
+        results = [
+            verify_model(item, cache, args.download, normalize)
+            for item in selected_models
+        ]
 
-    summary = {"schema": "edgefit.real_world_corpus.result.v1", "results": results}
+    summary = {
+        "schema": "edgefit.real_world_corpus.result.v1",
+        "verification_scope": (
+            "file_integrity" if args.file_integrity_only else "normalized_graph"
+        ),
+        "results": results,
+    }
     if args.repair_qlinear_global_average_pool:
         source_path = prepare_model_file(selected_models[0], cache, False)
         repaired_path = Path(args.repair_out)
@@ -108,6 +126,8 @@ def validate_repair_arguments(args: argparse.Namespace, models: list[dict[str, A
         raise SystemExit("repair requires both --repair-qlinear-global-average-pool and --repair-out")
     if requested and len(models) != 1:
         raise SystemExit("repair requires exactly one selected --model-id")
+    if requested and args.file_integrity_only:
+        raise SystemExit("repair cannot use --file-integrity-only")
 
 
 def repair_qlinear_global_average_pool_value_info(
@@ -242,13 +262,8 @@ def load_normalize():
 
 
 def verify_model(item: dict[str, Any], cache: Path, download: bool, normalize) -> dict[str, Any]:
-    model_path = prepare_model_file(item, cache, download)
-    model_bytes = model_path.stat().st_size
-    model_sha = sha256(model_path)
-    if model_bytes != item["model_bytes"]:
-        raise SystemExit(f"model byte mismatch for {item['id']}: {model_bytes}")
-    if model_sha != item["model_sha256"]:
-        raise SystemExit(f"model sha256 mismatch for {item['id']}: {model_sha}")
+    integrity = verify_model_file_integrity(item, cache, download)
+    model_path = Path(integrity["model_path"])
 
     data = normalize(model_path)
     ops = sorted({node["op_type"] for node in data["graph"]["nodes"]})
@@ -269,12 +284,32 @@ def verify_model(item: dict[str, Any], cache: Path, download: bool, normalize) -
         "id": item["id"],
         "status": "pass",
         "model_path": str(model_path),
-        "model_bytes": model_bytes,
-        "model_sha256": model_sha,
+        "model_bytes": integrity["model_bytes"],
+        "model_sha256": integrity["model_sha256"],
         "node_count": len(data["graph"]["nodes"]),
         "ops": ops,
         "domain_ops": domain_ops,
         "outputs": outputs,
+    }
+
+
+def verify_model_file_integrity(
+    item: dict[str, Any], cache: Path, download: bool
+) -> dict[str, Any]:
+    """只校验语料文件事实，供故意包含不受支持图结构的竞品矩阵使用。"""
+    model_path = prepare_model_file(item, cache, download)
+    model_bytes = model_path.stat().st_size
+    model_sha = sha256(model_path)
+    if model_bytes != item["model_bytes"]:
+        raise SystemExit(f"model byte mismatch for {item['id']}: {model_bytes}")
+    if model_sha != item["model_sha256"]:
+        raise SystemExit(f"model sha256 mismatch for {item['id']}: {model_sha}")
+    return {
+        "id": item["id"],
+        "status": "pass",
+        "model_path": str(model_path),
+        "model_bytes": model_bytes,
+        "model_sha256": model_sha,
     }
 
 

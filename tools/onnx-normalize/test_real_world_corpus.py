@@ -75,6 +75,25 @@ class RealWorldCorpusHelperTests(unittest.TestCase):
 
         self.assertIn("missing model", str(context.exception))
 
+    def test_file_integrity_verification_does_not_normalize_model(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            cache = Path(directory)
+            model = cache / "boundary.onnx"
+            model.write_bytes(b"not-a-normalizable-onnx")
+            item = {
+                "id": "boundary",
+                "model_url": "https://example.test/boundary.onnx",
+                "model_name": model.name,
+                "model_bytes": model.stat().st_size,
+                "model_sha256": self.corpus.sha256(model),
+            }
+
+            result = self.corpus.verify_model_file_integrity(item, cache, download=False)
+
+        self.assertEqual(result["status"], "pass")
+        self.assertEqual(result["model_bytes"], len(b"not-a-normalizable-onnx"))
+        self.assertEqual(result["model_sha256"], item["model_sha256"])
+
     def test_select_models_preserves_manifest_order(self) -> None:
         models = [{"id": "first"}, {"id": "second"}, {"id": "third"}]
 

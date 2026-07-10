@@ -127,7 +127,10 @@ Windows 二进制路径应改为 `tmp/cargo-target/debug/edgefit.exe`。
 互不争抢资源的 job：一个运行 1K、10K、100K 节点规划器规模证据，另一个运行
 固定 10 模型的三工具矩阵。竞品依赖固定为 `onnx==1.22.0`、
 `onnxruntime==1.22.0` 和 `onnx-tool==1.0.1`。模型仍从现有 corpus 清单下载并
-校验，不进入上传 Artifact。
+按字节数和 SHA-256 校验，不进入上传 Artifact。下载阶段使用
+`real_world_corpus.py --file-integrity-only`，不会提前规范化并过滤故意保留的
+不支持图结构；EdgeFit、ORT Mobile Checker 与 onnx-tool 必须各自留下接受或
+拒绝证据。
 
 规模案例仍复用同一个 `benchmark.py`。清单声明确定性的 float32 Relu 线性链，
 runner 生成规范化 JSON 后运行 Release EdgeFit；Linux 使用 GNU time 记录子进程

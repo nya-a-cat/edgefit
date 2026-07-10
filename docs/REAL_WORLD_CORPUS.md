@@ -64,6 +64,11 @@ SHA-256, operator set, operator domain set, output dtype/shape, and adapter JSON
 serializability. It supports both `archive_url` entries and direct `model_url`
 entries.
 
+需要为竞品矩阵准备包含 EdgeFit 已知不支持图结构的原始模型时，可同时传入
+`--file-integrity-only`。该模式只验证清单声明的模型字节数和 SHA-256，不执行
+规范化、算子集合或输出元数据检查；输出的 `verification_scope` 会明确记录为
+`file_integrity`，不能替代默认的完整语料验证。
+
 Current verification result: 20 corpus entries pass.
 
 ## Focused value_info repair
