@@ -1174,7 +1174,9 @@ def sha256(path: Path) -> str:
 
 def write_text(path: Path, text: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(text, encoding="utf-8")
+    # 证据文件固定使用 LF，避免 Windows 文本模式改写换行后破坏字节数和哈希。
+    with path.open("w", encoding="utf-8", newline="\n") as handle:
+        handle.write(text)
 
 
 def sanitize(value: str) -> str:
