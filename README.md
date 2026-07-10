@@ -102,7 +102,9 @@ SqueezeNet FP32 and INT8 models: INT8 reduced file bytes by 73.89% and the
 planned activation arena by 44.08%, but EdgeFit still blocked deployment because
 one quantized activation had unprovable dtype and size metadata. A schema-derived
 47-byte value_info repair then moved the same INT8 graph from fail to pass with
-high memory confidence and no diagnostics or suppressions. See
+high memory confidence and no diagnostics or suppressions. A hosted ONNX Runtime
+1.22.0 check also produced an exact output match with `max_abs_diff = 0.0` for a
+recorded deterministic non-zero input before and after the repair. See
 `docs/COMPETITIVE_BENCHMARK.md` for the evidence and metric boundaries.
 
 ## Workspace Layout
