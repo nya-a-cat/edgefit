@@ -100,15 +100,16 @@ and onnx-tool. It reuses ten SHA-256-pinned models from the existing real-world
 corpus, records tool versions, duration, raw evidence and stable extracted
 metrics, including the logical activation peak and planned arena high-water
 mark, and deliberately keeps unlike memory metrics separate. The benchmark
-full three-tool suite has not been run. A hosted Alpha case has compared pinned
-SqueezeNet FP32 and INT8 models: INT8 reduced file bytes by 73.89% and the
-planned activation arena by 44.08%, but EdgeFit still blocked deployment because
-one quantized activation had unprovable dtype and size metadata. A schema-derived
-47-byte value_info repair then moved the same INT8 graph from fail to pass with
-high memory confidence and no diagnostics or suppressions. A hosted ONNX Runtime
-1.22.0 check also produced an exact output match with `max_abs_diff = 0.0` for a
-recorded deterministic non-zero input before and after the repair. See
-`docs/COMPETITIVE_BENCHMARK.md` for the evidence and metric boundaries.
+has now run on GitHub against all ten fixed models and all three pinned tools.
+EdgeFit completed analysis for 9/10 cases; onnx-tool completed 4/10, while the
+ORT Mobile checker completed 9/10. EdgeFit produced target-budget decisions for
+five models that onnx-tool rejected, but this is a workflow difference rather
+than a universal speed or accuracy win. The hosted scale gate also processed a
+deterministic 100,000-node graph in an 854 ms median with a 336,494,592-byte
+maximum peak RSS across five Release runs. These are hosted process measurements,
+not device inference results. The earlier SqueezeNet repair case remains the
+concrete fail → metadata repair → pass → exact ORT output-equivalence example.
+See `docs/COMPETITIVE_BENCHMARK.md` for the runs, evidence and metric boundaries.
 
 ## Workspace Layout
 
