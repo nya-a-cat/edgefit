@@ -49,7 +49,8 @@ runs:
       env:
         CARGO_TARGET_DIR: ${{ runner.temp }}/edgefit-target
         EDGEFIT_TARGET: ${{ inputs.target }}
-      run: "$CARGO_TARGET_DIR/release/edgefit" target validate "$EDGEFIT_TARGET"
+      run: |
+        "$CARGO_TARGET_DIR/release/edgefit" target validate "$EDGEFIT_TARGET"
     - name: Run EdgeFit
       id: edgefit
       shell: bash
