@@ -8,7 +8,8 @@ else()
     message(FATAL_ERROR "esp-dl component was not resolved")
 endif()
 
-include(${espdl_dir}/fbs_loader/cmake/utilities.cmake)
+set(cmake_dir ${espdl_dir}/fbs_loader/cmake)
+include(${cmake_dir}/utilities.cmake)
 
 idf_component_register(
     SRCS "app_main.cpp"
@@ -17,6 +18,6 @@ idf_component_register(
 
 target_add_aligned_binary_data(
     ${COMPONENT_LIB}
-    "${CMAKE_CURRENT_LIST_DIR}/models/model.espdl"
+    "models/model.espdl"
     BINARY
 )
