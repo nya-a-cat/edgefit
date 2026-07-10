@@ -40,12 +40,30 @@ INT8 候选不是因为内存超预算或算子不受支持而失败。自定义
 这仍不是设备实测。耗时只是托管 runner 上包含进程和 Python adapter 启动的
 端到端时间，arena 是 target profile 下的确定性静态规划值。
 
-The Alpha workflow also enforces a fail-to-pass closure for the missing
-`pool10_1_quantized` declaration. It first asserts that the original INT8 model
-exits with deployment failure, repairs value_info from the model's own producer
-input and zero-point evidence using the pinned ORT schema, then requires the
-repaired model to pass EdgeFit. Original and repaired reports are uploaded; the
-repaired ONNX binary is not.
+### value_info 修复闭环
+
+[GitHub Actions run 29094249434](https://github.com/nya-a-cat/edgefit/actions/runs/29094249434)
+完成了同一模型的 fail-to-pass 验证。工作流先断言原始 INT8 模型必须失败，
+再依据模型自身 producer 输入、output zero-point 和固定 ORT v1.22.0 schema
+补充 `pool10_1_quantized`，最后要求修复模型通过 EdgeFit。
+
+| 证据 | 原始模型 | 修复模型 |
+| --- | --- | --- |
+| SHA-256 | `3da17dfa...c0a972b` | `61edbf7d...b89f595` |
+| 文件字节 | 1,293,388 | 1,293,435 |
+| `pool10_1_quantized` | dtype/shape 缺失 | `uint8 [1,1000,1,1]` |
+| 未解析 activation | 1 | 0 |
+| 未知 dtype tensor | 1 | 0 |
+| 峰值可信度 | medium | high |
+| 计划 arena | 3,864,384 B | 3,864,384 B |
+| EdgeFit 判定 | fail | pass |
+| diagnostics | `EF0502`, `EF0104`, `EF0302` | 空 |
+| suppressed diagnostics | 空 | 空 |
+
+修复只增加 47 字节的 value_info，不改变 initializer、节点、arena 或预算。
+原始和修复报告会作为 Artifact 上传，修复后的 ONNX 二进制不会上传。这证明
+pass 来自证据补全，而不是放宽 target、扩大预算或 suppression。它仍不证明
+模型精度或设备运行时正确性，后两项需要独立的 runtime/hardware 验证。
 
 ## 为什么不直接比较“谁通过了更多模型”
 
