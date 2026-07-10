@@ -20,6 +20,7 @@ import time
 from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
+from statistics import median
 from typing import Any, Callable
 from urllib.parse import urlparse
 
@@ -53,6 +54,17 @@ def main() -> int:
     parser.add_argument("--python", default=sys.executable)
     parser.add_argument("--out-dir", default=str(DEFAULT_OUT_DIR))
     parser.add_argument("--timeout-seconds", type=int, default=180)
+    parser.add_argument(
+        "--tools",
+        default=",".join(TOOLS),
+        help="Comma-separated tools to run: edgefit, ort-mobile, onnx-tool.",
+    )
+    parser.add_argument(
+        "--edgefit-repetitions",
+        type=int,
+        default=1,
+        help="Repeat EdgeFit per case and report the median end-to-end process time.",
+    )
     args = parser.parse_args()
 
     try:
@@ -74,6 +86,15 @@ def main() -> int:
 def benchmark(args: argparse.Namespace) -> dict[str, Any]:
     if args.timeout_seconds <= 0:
         raise InputError("--timeout-seconds must be greater than zero")
+    selected_tools = parse_tool_selection(args.tools)
+    require(
+        1 <= args.edgefit_repetitions <= 20,
+        "--edgefit-repetitions must be between 1 and 20",
+    )
+    require(
+        "edgefit" in selected_tools or args.edgefit_repetitions == 1,
+        "--edgefit-repetitions requires the edgefit tool",
+    )
 
     manifest_path = Path(args.manifest).resolve()
     manifest = read_json(manifest_path)
@@ -117,7 +138,7 @@ def benchmark(args: argparse.Namespace) -> dict[str, Any]:
     out_dir.mkdir(parents=True, exist_ok=True)
     edgefit = Path(args.edgefit)
     started_at = utc_now()
-    versions = probe_versions(edgefit, args.python, args.timeout_seconds)
+    versions = probe_versions(edgefit, args.python, args.timeout_seconds, selected_tools)
     results = [
         run_case(
             case_spec,
@@ -128,6 +149,8 @@ def benchmark(args: argparse.Namespace) -> dict[str, Any]:
             args.python,
             out_dir,
             args.timeout_seconds,
+            selected_tools,
+            args.edgefit_repetitions,
         )
         for case_spec, model, model_path in prepared_cases
     ]
@@ -135,16 +158,26 @@ def benchmark(args: argparse.Namespace) -> dict[str, Any]:
     status_counts = Counter(
         run["status"] for case in results for run in case["tools"].values()
     )
-    versions_complete = all(versions[tool]["status"] == "completed" for tool in TOOLS)
+    versions_complete = all(
+        versions[tool]["status"] == "completed" for tool in selected_tools
+    )
     runs_complete = all(
         run["status"] in EVIDENCE_STATUSES
         for case in results
         for run in case["tools"].values()
     )
+    comparisons = build_comparisons(manifest.get("comparisons", []), results)
+    comparisons_complete = all(
+        comparison["status"] == "complete" for comparison in comparisons
+    )
     return {
         "schema": RESULT_SCHEMA,
-        "runner_version": "1",
-        "status": "complete" if versions_complete and runs_complete else "incomplete",
+        "runner_version": "2",
+        "status": (
+            "complete"
+            if versions_complete and runs_complete and comparisons_complete
+            else "incomplete"
+        ),
         "started_at": started_at,
         "finished_at": utc_now(),
         "manifest": evidence_file(manifest_path),
@@ -155,11 +188,14 @@ def benchmark(args: argparse.Namespace) -> dict[str, Any]:
             "python": platform.python_version(),
             "processor_count": os.cpu_count(),
         },
+        "tools": list(selected_tools),
+        "edgefit_repetitions": args.edgefit_repetitions,
         "tool_versions": versions,
         "case_count": len(results),
         "run_count": sum(status_counts.values()),
         "run_status_counts": dict(sorted(status_counts.items())),
         "cases": results,
+        "comparisons": comparisons,
         "metric_boundaries": {
             "edgefit_planned_activation_arena_bytes": (
                 "target-relative deterministic arena high-water mark including alignment, "
@@ -187,6 +223,8 @@ def run_case(
     python: str,
     out_dir: Path,
     timeout: int,
+    selected_tools: tuple[str, ...],
+    edgefit_repetitions: int,
 ) -> dict[str, Any]:
     case_id = text_field(case_spec, "id")
     tags = case_spec.get("tags", [])
@@ -196,8 +234,9 @@ def run_case(
     )
     case_dir = out_dir / "artifacts" / case_id
     case_dir.mkdir(parents=True, exist_ok=True)
-    tools = {
-        "edgefit": run_tool(
+    tools = {}
+    if "edgefit" in selected_tools:
+        tools["edgefit"] = run_tool(
             "edgefit",
             [
                 str(edgefit),
@@ -216,8 +255,10 @@ def run_case(
             parse_edgefit,
             case_dir / "edgefit-report.json",
             {**os.environ, "EDGEFIT_PYTHON": python},
-        ),
-        "ort-mobile": run_tool(
+            repetitions=edgefit_repetitions,
+        )
+    if "ort-mobile" in selected_tools:
+        tools["ort-mobile"] = run_tool(
             "ort-mobile",
             [
                 python,
@@ -229,8 +270,9 @@ def run_case(
             timeout,
             {0},
             parse_ort_mobile,
-        ),
-        "onnx-tool": run_tool(
+        )
+    if "onnx-tool" in selected_tools:
+        tools["onnx-tool"] = run_tool(
             "onnx-tool",
             [
                 python,
@@ -248,8 +290,7 @@ def run_case(
             {0},
             parse_onnx_tool,
             case_dir / "onnx-tool-profile.csv",
-        ),
-    }
+        )
     return {
         "id": case_id,
         "model_id": model["id"],
@@ -270,11 +311,18 @@ def run_tool(
     parser: Callable[[str, Path | None], dict[str, Any]],
     artifact: Path | None = None,
     env: dict[str, str] | None = None,
+    repetitions: int = 1,
 ) -> dict[str, Any]:
     if artifact and artifact.is_file():
         artifact.unlink()
-    process = run_process(command, timeout, env)
-    status = process_status(process, accepted_codes)
+    processes = [run_process(command, timeout, env) for _ in range(repetitions)]
+    statuses = [process_status(process, accepted_codes) for process in processes]
+    first_failure = next(
+        (index for index, status in enumerate(statuses) if status != "completed"),
+        None,
+    )
+    process = processes[first_failure] if first_failure is not None else processes[-1]
+    status = statuses[first_failure] if first_failure is not None else "completed"
     combined = "\n".join(
         part for part in [process["stdout"], process["stderr"]] if part
     )
@@ -308,7 +356,8 @@ def run_tool(
     result = {
         "status": status,
         "exit_code": process["exit_code"],
-        "duration_ms": process["duration_ms"],
+        "duration_ms": int(median(item["duration_ms"] for item in processes)),
+        "duration_samples_ms": [item["duration_ms"] for item in processes],
         "command": [sanitize(arg) for arg in command],
         "observations": observations,
         "artifacts": artifacts,
@@ -533,7 +582,12 @@ def process_status(process: dict[str, Any], accepted_codes: set[int]) -> str:
     return "tool_rejected"
 
 
-def probe_versions(edgefit: Path, python: str, timeout: int) -> dict[str, dict[str, Any]]:
+def probe_versions(
+    edgefit: Path,
+    python: str,
+    timeout: int,
+    selected_tools: tuple[str, ...],
+) -> dict[str, dict[str, Any]]:
     code = "import importlib.metadata as m, sys; print(m.version(sys.argv[1]))"
     commands = {
         "edgefit": [str(edgefit), "--version"],
@@ -541,7 +595,8 @@ def probe_versions(edgefit: Path, python: str, timeout: int) -> dict[str, dict[s
         "onnx-tool": [python, "-c", code, "onnx-tool"],
     }
     versions = {}
-    for name, command in commands.items():
+    for name in selected_tools:
+        command = commands[name]
         process = run_process(command, timeout)
         status = process_status(process, {0})
         stdout = sanitize(process["stdout"]).strip()
@@ -553,6 +608,98 @@ def probe_versions(edgefit: Path, python: str, timeout: int) -> dict[str, dict[s
             "detail": first_nonempty(stderr, stdout)[:1000],
         }
     return versions
+
+
+def parse_tool_selection(value: str) -> tuple[str, ...]:
+    """解析工具选择并保持公共工具顺序，避免同一清单产生随机排序。"""
+    requested = [item.strip() for item in value.split(",") if item.strip()]
+    require(requested, "--tools must select at least one tool")
+    require(len(requested) == len(set(requested)), "--tools contains duplicates")
+    unknown = sorted(set(requested) - set(TOOLS))
+    require(not unknown, f"unknown tools: {', '.join(unknown)}")
+    return tuple(tool for tool in TOOLS if tool in requested)
+
+
+def build_comparisons(
+    specs: Any,
+    cases: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """从同一次固定清单运行中提取前后对照，不跨环境拼接数字。"""
+    require(isinstance(specs, list), "comparisons must be an array")
+    case_index = {case["id"]: case for case in cases}
+    comparisons = []
+    seen = set()
+    for spec in specs:
+        require(isinstance(spec, dict), "comparison entries must be objects")
+        comparison_id = text_field(spec, "id")
+        baseline_id = text_field(spec, "baseline_case")
+        candidate_id = text_field(spec, "candidate_case")
+        require(comparison_id not in seen, f"duplicate comparison {comparison_id}")
+        require(baseline_id != candidate_id, f"comparison {comparison_id} reuses one case")
+        require(baseline_id in case_index, f"unknown baseline case {baseline_id}")
+        require(candidate_id in case_index, f"unknown candidate case {candidate_id}")
+        seen.add(comparison_id)
+        baseline_run = case_index[baseline_id]["tools"].get("edgefit")
+        candidate_run = case_index[candidate_id]["tools"].get("edgefit")
+        require(
+            baseline_run is not None and candidate_run is not None,
+            f"comparison {comparison_id} requires edgefit evidence",
+        )
+        comparison = {
+            "id": comparison_id,
+            "baseline_case": baseline_id,
+            "candidate_case": candidate_id,
+            "hypothesis": str(spec.get("hypothesis", "")).strip(),
+            "status": "complete",
+            "metrics": {},
+        }
+        if baseline_run["status"] != "completed" or candidate_run["status"] != "completed":
+            comparison["status"] = "incomplete"
+            comparisons.append(comparison)
+            continue
+        before = baseline_run["observations"]
+        after = candidate_run["observations"]
+        for field in (
+            "model_file_bytes",
+            "initializer_bytes",
+            "estimated_peak_activation_bytes",
+            "planned_activation_arena_bytes",
+        ):
+            comparison["metrics"][field] = compare_integer(before.get(field), after.get(field))
+        comparison["metrics"]["edgefit_process_duration_ms"] = compare_integer(
+            baseline_run["duration_ms"], candidate_run["duration_ms"]
+        )
+        comparison["baseline"] = {
+            "verdict": before.get("verdict"),
+            "quantization_representation": before.get("quantization_representation"),
+            "peak_node": before.get("peak_activation_node_name")
+            or before.get("peak_activation_node_index"),
+            "peak_op_type": before.get("peak_activation_op_type"),
+        }
+        comparison["candidate"] = {
+            "verdict": after.get("verdict"),
+            "quantization_representation": after.get("quantization_representation"),
+            "peak_node": after.get("peak_activation_node_name")
+            or after.get("peak_activation_node_index"),
+            "peak_op_type": after.get("peak_activation_op_type"),
+        }
+        comparisons.append(comparison)
+    return comparisons
+
+
+def compare_integer(before: Any, after: Any) -> dict[str, Any]:
+    """保留原值和差值；只有正基线才给出减少比例。"""
+    if not isinstance(before, int) or isinstance(before, bool):
+        return {"before": before, "after": after, "delta": None, "reduction_percent": None}
+    if not isinstance(after, int) or isinstance(after, bool):
+        return {"before": before, "after": after, "delta": None, "reduction_percent": None}
+    reduction = round((before - after) * 10000 / before) / 100 if before > 0 else None
+    return {
+        "before": before,
+        "after": after,
+        "delta": after - before,
+        "reduction_percent": reduction,
+    }
 
 
 def read_json(path: Path) -> dict[str, Any]:
@@ -606,6 +753,7 @@ def evidence_file(path: Path) -> dict[str, Any]:
 
 
 def render_markdown(summary: dict[str, Any]) -> str:
+    tools = tuple(summary.get("tools", TOOLS))
     lines = [
         "# EdgeFit Competitive Benchmark",
         "",
@@ -618,7 +766,7 @@ def render_markdown(summary: dict[str, Any]) -> str:
         "| Tool | Probe | Version |",
         "| --- | --- | --- |",
     ]
-    for tool in TOOLS:
+    for tool in tools:
         probe = summary["tool_versions"][tool]
         lines.append(
             f"| `{tool}` | `{probe['status']}` | `{md(probe.get('version') or 'unknown')}` |"
@@ -633,12 +781,55 @@ def render_markdown(summary: dict[str, Any]) -> str:
         ]
     )
     for case in summary["cases"]:
-        for tool in TOOLS:
+        for tool in tools:
             result = case["tools"][tool]
             exit_code = result["exit_code"] if result["exit_code"] is not None else ""
             lines.append(
                 f"| `{md(case['id'])}` | `{tool}` | `{result['status']}` | {exit_code} | "
                 f"{result['duration_ms']} ms | {md(observation(tool, result))} |"
+            )
+    if summary.get("comparisons"):
+        lines.extend(["", "## Before/after comparisons", ""])
+        for comparison in summary["comparisons"]:
+            lines.extend(
+                [
+                    f"### {md(comparison['id'])}",
+                    "",
+                    f"**Status:** `{comparison['status']}`  ",
+                    f"**Baseline:** `{md(comparison['baseline_case'])}`  ",
+                    f"**Candidate:** `{md(comparison['candidate_case'])}`  ",
+                    f"**Hypothesis:** {md(comparison.get('hypothesis') or 'not specified')}",
+                    "",
+                ]
+            )
+            if comparison["status"] != "complete":
+                lines.append("EdgeFit evidence is incomplete; no numeric comparison is reported.")
+                continue
+            lines.extend(
+                [
+                    "| Metric | Baseline | Candidate | Delta | Reduction |",
+                    "| --- | ---: | ---: | ---: | ---: |",
+                ]
+            )
+            for field, values in comparison["metrics"].items():
+                reduction = values["reduction_percent"]
+                reduction_text = f"{reduction:.2f}%" if reduction is not None else "n/a"
+                lines.append(
+                    f"| `{field}` | {values['before']} | {values['after']} | "
+                    f"{values['delta']} | {reduction_text} |"
+                )
+            baseline = comparison["baseline"]
+            candidate = comparison["candidate"]
+            lines.extend(
+                [
+                    "",
+                    f"- Verdict: `{md(baseline.get('verdict'))}` → `{md(candidate.get('verdict'))}`.",
+                    f"- Quantization: `{md(baseline.get('quantization_representation'))}` → `{md(candidate.get('quantization_representation'))}`.",
+                    f"- Peak location: `{md(baseline.get('peak_node'))}` / `{md(baseline.get('peak_op_type'))}` → "
+                    f"`{md(candidate.get('peak_node'))}` / `{md(candidate.get('peak_op_type'))}`.",
+                    "- Duration is the median end-to-end process time on this runner, not device inference latency.",
+                    "",
+                ]
             )
     lines.extend(
         [

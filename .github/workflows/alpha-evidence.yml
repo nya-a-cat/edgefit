@@ -1,0 +1,52 @@
+name: Alpha evidence
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  squeezenet-quantization-case:
+    name: SqueezeNet FP32 vs INT8
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: tools/onnx-normalize/requirements.txt
+      - name: Install pinned ONNX dependency
+        run: python -m pip install -r tools/onnx-normalize/requirements.txt
+      - name: Build EdgeFit
+        run: cargo build --workspace --release --locked
+      - name: Download and verify the two pinned real models
+        run: |
+          python tools/onnx-normalize/real_world_corpus.py \
+            --download \
+            --cache tmp/real_world_corpus \
+            --model-id onnx-model-zoo-squeezenet1.0-12 \
+            --model-id onnx-model-zoo-squeezenet1.0-12-int8 \
+            --out tmp/alpha-case/corpus-verification.json
+      - name: Generate repeatable Alpha evidence
+        run: |
+          python tools/competitive-benchmark/benchmark.py \
+            --manifest tools/competitive-benchmark/alpha_case_manifest.json \
+            --corpus-cache tmp/real_world_corpus \
+            --edgefit target/release/edgefit \
+            --tools edgefit \
+            --edgefit-repetitions 7 \
+            --out-dir tmp/alpha-case
+      - name: Publish comparison in job summary
+        run: cat tmp/alpha-case/competitive-benchmark.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload Alpha evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: alpha-squeezenet-evidence
+          path: tmp/alpha-case/
+          if-no-files-found: error

@@ -74,6 +74,21 @@ class RealWorldCorpusHelperTests(unittest.TestCase):
 
         self.assertIn("missing model", str(context.exception))
 
+    def test_select_models_preserves_manifest_order(self) -> None:
+        models = [{"id": "first"}, {"id": "second"}, {"id": "third"}]
+
+        selected = self.corpus.select_models(models, ["third", "first"])
+
+        self.assertEqual([item["id"] for item in selected], ["first", "third"])
+
+    def test_select_models_rejects_unknown_and_duplicate_ids(self) -> None:
+        models = [{"id": "known"}]
+
+        with self.assertRaises(SystemExit):
+            self.corpus.select_models(models, ["missing"])
+        with self.assertRaises(SystemExit):
+            self.corpus.select_models(models, ["known", "known"])
+
 
 if __name__ == "__main__":
     unittest.main()
