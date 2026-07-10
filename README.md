@@ -100,7 +100,9 @@ mark, and deliberately keeps unlike memory metrics separate. The benchmark
 full three-tool suite has not been run. A hosted Alpha case has compared pinned
 SqueezeNet FP32 and INT8 models: INT8 reduced file bytes by 73.89% and the
 planned activation arena by 44.08%, but EdgeFit still blocked deployment because
-one quantized activation had unprovable dtype and size metadata. See
+one quantized activation had unprovable dtype and size metadata. A schema-derived
+47-byte value_info repair then moved the same INT8 graph from fail to pass with
+high memory confidence and no diagnostics or suppressions. See
 `docs/COMPETITIVE_BENCHMARK.md` for the evidence and metric boundaries.
 
 ## Workspace Layout

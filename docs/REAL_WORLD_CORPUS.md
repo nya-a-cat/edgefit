@@ -90,6 +90,13 @@ The repaired model is checked, reloaded, normalized, and hashed before evidence
 is accepted. The generated model remains a temporary workflow artifact and is
 not committed or uploaded.
 
+The hosted closure run derived `uint8 [1, 1000, 1, 1]` from the concrete
+`conv10_1_quantized` input `[1, 1000, 13, 13]` and matching uint8 output zero
+point. The added declaration increased the file by 47 bytes, removed the sole
+unknown dtype and unresolved activation, raised memory confidence from medium
+to high, and changed EdgeFit from fail to pass without suppressions. Evidence:
+<https://github.com/nya-a-cat/edgefit/actions/runs/29094249434>.
+
 ## Profile Matrix Consumer
 
 `tools/onnx-normalize/profile_matrix.py` consumes this corpus cache and runs each
