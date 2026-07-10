@@ -33,6 +33,14 @@ jobs:
             --model-id onnx-model-zoo-squeezenet1.0-12 \
             --model-id onnx-model-zoo-squeezenet1.0-12-int8 \
             --out tmp/alpha-case/corpus-verification.json
+      - name: Locate and repair the missing INT8 value_info
+        run: |
+          python tools/onnx-normalize/real_world_corpus.py \
+            --cache tmp/real_world_corpus \
+            --model-id onnx-model-zoo-squeezenet1.0-12-int8 \
+            --repair-qlinear-global-average-pool pool10_1_quantized \
+            --repair-out tmp/real_world_corpus/squeezenet1.0-12-int8-value-info.onnx \
+            --out tmp/alpha-case/value-info-repair.json
       - name: Generate repeatable Alpha evidence
         run: |
           python tools/competitive-benchmark/benchmark.py \
@@ -42,8 +50,30 @@ jobs:
             --tools edgefit \
             --edgefit-repetitions 7 \
             --out-dir tmp/alpha-case
+      - name: Verify fail-to-pass closure
+        shell: bash
+        run: |
+          set +e
+          target/release/edgefit check \
+            tmp/real_world_corpus/squeezenet1.0-12-int8.onnx \
+            --target targets/ort-mobile-cpu.yaml \
+            --format json \
+            --out tmp/alpha-case/original-int8-report.json \
+            --summary tmp/alpha-case/original-int8-summary.md
+          original_exit=$?
+          set -e
+          test "$original_exit" -eq 1
+          target/release/edgefit check \
+            tmp/real_world_corpus/squeezenet1.0-12-int8-value-info.onnx \
+            --target targets/ort-mobile-cpu.yaml \
+            --format json \
+            --out tmp/alpha-case/repaired-int8-report.json \
+            --summary tmp/alpha-case/repaired-int8-summary.md
       - name: Publish comparison in job summary
-        run: cat tmp/alpha-case/competitive-benchmark.md >> "$GITHUB_STEP_SUMMARY"
+        run: |
+          cat tmp/alpha-case/competitive-benchmark.md >> "$GITHUB_STEP_SUMMARY"
+          cat tmp/alpha-case/original-int8-summary.md >> "$GITHUB_STEP_SUMMARY"
+          cat tmp/alpha-case/repaired-int8-summary.md >> "$GITHUB_STEP_SUMMARY"
       - name: Upload Alpha evidence
         uses: actions/upload-artifact@v4
         with:

@@ -66,6 +66,30 @@ entries.
 
 Current verification result: 20 corpus entries pass.
 
+## Focused value_info repair
+
+The corpus CLI can repair one missing intermediate declaration produced by
+`com.microsoft::QLinearGlobalAveragePool` while keeping the downloaded source
+model unchanged:
+
+```bash
+python tools/onnx-normalize/real_world_corpus.py \
+  --cache tmp/real_world_corpus \
+  --model-id onnx-model-zoo-squeezenet1.0-12-int8 \
+  --repair-qlinear-global-average-pool pool10_1_quantized \
+  --repair-out tmp/real_world_corpus/squeezenet1.0-12-int8-value-info.onnx \
+  --out tmp/alpha-case/value-info-repair.json
+```
+
+This is not a free-form metadata override. The repair refuses to write unless
+there is exactly one matching Microsoft-domain producer, a concrete int8/uint8
+input, a matching output zero-point type, a consumer, and a separate output
+path. Shape and type follow the pinned ONNX Runtime v1.22.0 schema: output type
+inherits the input, N/C are retained, and all spatial dimensions become 1.
+The repaired model is checked, reloaded, normalized, and hashed before evidence
+is accepted. The generated model remains a temporary workflow artifact and is
+not committed or uploaded.
+
 ## Profile Matrix Consumer
 
 `tools/onnx-normalize/profile_matrix.py` consumes this corpus cache and runs each

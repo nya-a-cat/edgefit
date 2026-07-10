@@ -40,6 +40,13 @@ INT8 候选不是因为内存超预算或算子不受支持而失败。自定义
 这仍不是设备实测。耗时只是托管 runner 上包含进程和 Python adapter 启动的
 端到端时间，arena 是 target profile 下的确定性静态规划值。
 
+The Alpha workflow also enforces a fail-to-pass closure for the missing
+`pool10_1_quantized` declaration. It first asserts that the original INT8 model
+exits with deployment failure, repairs value_info from the model's own producer
+input and zero-point evidence using the pinned ORT schema, then requires the
+repaired model to pass EdgeFit. Original and repaired reports are uploaded; the
+repaired ONNX binary is not.
+
 ## 为什么不直接比较“谁通过了更多模型”
 
 三个工具回答的问题不同：
