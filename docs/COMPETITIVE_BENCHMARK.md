@@ -1,0 +1,124 @@
+# EdgeFit 竞品基准
+
+## 目的
+
+这套基准用于回答“EdgeFit 相比现有 ONNX 分析工具多解决了什么问题”，而不是通过自定义总分宣布 EdgeFit 获胜。第一阶段固定比较三项本地工具：
+
+- EdgeFit：目标约束、稳定诊断、预算判定和 CI 工件。
+- ONNX Runtime Mobile Model Usability Checker：ORT Mobile、NNAPI 与 CoreML 的模型适用性和分区估计。
+- onnx-tool：shape inference、MACs、参数和逐节点内存统计。
+
+源码入口为 `tools/competitive-benchmark/benchmark.py`，案例清单为 `tools/competitive-benchmark/benchmark_manifest.json`。当前只完成源码，尚未运行基准。
+
+## 为什么不直接比较“谁通过了更多模型”
+
+三个工具回答的问题不同：
+
+| 指标 | 含义 | 能否直接横向比较 |
+| --- | --- | --- |
+| EdgeFit `planned_activation_arena_bytes` | 确定性 best-fit arena 高水位，包含 profile 声明的对齐、workspace、碎片与安全 in-place 复用 | 只能和相同 target contract 或运行时 arena 测量比较 |
+| EdgeFit `estimated_peak_activation_bytes` | 同一生命周期扫描中的逻辑 live tensor 峰值，不含物理 arena 放置影响 | 用于解释 allocator 开销，不能代替实际 arena 高水位 |
+| onnx-tool `Total/Memory` | 各节点输出 activation 与静态权重内存的求和；共享权重可能重复计数 | 不能当作峰值 activation |
+| ORT Mobile partition coverage | 指定 ORT Execution Provider 可覆盖的节点和分区估计 | 只适用于该 ORT 场景 |
+
+因此基准保留原始 stdout、stderr 和工具原始报告，并对每个文件记录 SHA-256。统一 JSON 只提取有明确语义的字段，不把这些内存数字合并成一个排名。
+
+## 固定案例
+
+第一阶段从现有 20 模型语料清单中选取 10 个案例，覆盖：
+
+- 小型与中型静态 fp32 模型。
+- QOperator 与 QDQ 两种 int8 表示。
+- `com.microsoft` 扩展域。
+- symbolic shape、目标检测图和控制流失败边界。
+- 同一模型家族的 fp32、QOperator、QDQ 对照。
+
+案例只引用 `tools/onnx-normalize/real_world_corpus.json` 中已有的模型 ID、字节数和 SHA-256，不复制下载地址或另建一套模型事实源。
+
+## 执行方式
+
+运行前需要满足以下条件：
+
+1. 现有 real-world corpus 已按清单下载、解包并校验到 `tmp/real_world_corpus/`。
+2. EdgeFit CLI 已构建，并通过 `--edgefit` 指向对应二进制。
+3. `--python` 指向同时安装官方 `onnxruntime` 与上游 `onnx-tool` 的 Python 环境。
+4. 所有网络下载应在运行基准前单独完成；基准 CLI 本身不联网、不安装依赖。
+
+计划使用的命令如下；本轮未执行：
+
+```bash
+uv run python tools/competitive-benchmark/benchmark.py \
+  --edgefit tmp/cargo-target/debug/edgefit \
+  --out-dir tmp/competitive_benchmark
+```
+
+Windows 二进制路径应改为 `tmp/cargo-target/debug/edgefit.exe`。
+
+## 输出
+
+```text
+tmp/competitive_benchmark/
+├── competitive-benchmark.json
+├── competitive-benchmark.md
+└── artifacts/
+    └── <case-id>/
+        ├── edgefit-report.json
+        ├── edgefit.stdout.txt
+        ├── edgefit.stderr.txt
+        ├── ort-mobile.stdout.txt
+        ├── ort-mobile.stderr.txt
+        ├── onnx-tool-profile.csv
+        ├── onnx-tool.stdout.txt
+        └── onnx-tool.stderr.txt
+```
+
+结果状态含义：
+
+- `completed`：工具以该适配器允许的退出码完成，所需报告也可解析。
+- `tool_rejected`：工具已实际运行，但拒绝或无法分析该模型；这是有效的竞品边界证据。
+- `unavailable`：二进制或 Python 包不可用。
+- `timed_out`：超过单工具单案例超时。
+- `runner_error`：工具声称完成，但缺失或损坏了约定输出。
+
+只有三个工具的版本探针都有结果，且所有案例都得到 `completed` 或 `tool_rejected` 证据时，整套结果才标记为 `complete`。
+
+## 复杂度
+
+设案例数为 `C`，单个模型文件大小为 `S`，三个上游工具的执行成本分别为 `E`、`O`、`T`：
+
+- 基准前置 SHA-256 校验为 `O(C × S)`。
+- 编排成本为 `O(C × (E + O + T))`，三个工具按固定顺序串行执行，避免并发争抢 CPU 和内存影响结果。
+- 证据磁盘占用为模型外的 `O(C × 工具输出大小)`；模型本身复用既有 corpus cache。
+- 当前计时是一次独立进程的端到端 wall time，包括 Python 启动和模型读取，不是微基准。
+- 第一阶段不跨平台采集子进程峰值 RSS，因为 Python 标准库缺少一致的 Windows/Linux 实现；不能把缺失值伪装成零。
+
+EdgeFit 的 activation planner 使用增量 live-byte 计数和按 offset/size
+建立双索引的 best-fit free list。设 profile 规则数为 `P`、张量数为 `T`、
+shape 总维数为 `D`、symbol bound 数为 `S`、graph boundary 出现次数为 `B`、节点数为 `N`、
+输入/输出出现次数为 `E/O`、arena 事件数为 `A`、bounded/unresolved 事实数为 `U`、trace 记录数为 `R`，
+规划目标复杂度为期望
+`O(P + T + D log(S + 2) + B + N + E + O + A log A + U log T + R)`，空间为
+`O(P + T + A + R + delta)`，其中 `delta` 是单节点最大输入输出数；
+trace 按执行顺序生成，Top contributors 只保留前八项。热路径不再在每个节点
+重扫全部存活张量。该结论是源码结构目标，本轮没有运行超大图性能基准，不能
+表述成已测吞吐或时延。
+
+## 判定标准
+
+这一阶段不设置“EdgeFit 总分”，而输出四类结论：
+
+1. **已被上游做得更好**：例如 ORT 专属 EP 覆盖或 onnx-tool MACs，应复用或明确不竞争。
+2. **EdgeFit 独立价值**：target profile、稳定诊断 ID、预算 pass/fail、snapshot/diff、SARIF。
+3. **需要校准**：EdgeFit activation estimate 与后续设备或厂商分析器之间的误差。
+4. **应删除或后置**：没有可验证差异、维护成本却持续增长的功能。
+
+## 第二阶段边界
+
+ST Edge AI CLI 和 Edge Impulse 更接近设备级真值，但需要供应商工具、账户、格式转换或云端流程。第二阶段应将其输出作为人工核验依据，不在第一版编排器里加入未经验证的自动适配器。
+
+上游依据：
+
+- ORT Mobile Model Usability Checker：<https://onnxruntime.ai/docs/tutorials/mobile/helpers/model-usability-checker.html>
+- onnx-tool CLI 与 profiling：<https://github.com/ThanatosShinji/onnx-tool>
+- ST Edge AI `analyze`：<https://stedgeai-dc.st.com/assets/embedded-docs/command_line_interface.html>
+- Edge Impulse target budget：<https://docs.edgeimpulse.com/studio/projects/dashboard/target-device>

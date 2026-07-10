@@ -1,0 +1,1039 @@
+{
+    "schema":  "edgefit.operator_support_labels.v1",
+    "sample_goal":  20,
+    "label_basis":  "Reviewed labels for the verified 20-model ONNX corpus by target profile contract. Unsupported ops and dtypes are the expected deployment-gate findings for each model/profile cell.",
+    "labels":  [
+                   {
+                       "model_id":  "onnx-model-zoo-mnist-8",
+                       "target_id":  "esp32s3_custom_v1",
+                       "expected_status":  "fail",
+                       "unsupported_ops":  [
+                                               "MatMul",
+                                               "MaxPool"
+                                           ],
+                       "unsupported_dtypes":  [
+                                                  "float32",
+                                                  "int64"
+                                              ],
+                       "notes":  "Reviewed label: strict MCU profile rejects this verified corpus model by deployment-budget, dtype, shape, quantization, or operator constraints."
+                   },
+                   {
+                       "model_id":  "onnx-model-zoo-mnist-8",
+                       "target_id":  "ort_mobile_cpu_seed_v1",
+                       "expected_status":  "pass",
+                       "unsupported_ops":  [
+
+                                           ],
+                       "unsupported_dtypes":  [
+
+                                              ],
+                       "notes":  "Reviewed label: ORT mobile-like seed profile accepts this verified corpus model under the calibrated 20-model operator and memory boundary."
+                   },
+                   {
+                       "model_id":  "onnx-model-zoo-mnist-8",
+                       "target_id":  "tflm_micro_seed_v1",
+                       "expected_status":  "fail",
+                       "unsupported_ops":  [
+                                               "MatMul",
+                                               "MaxPool"
+                                           ],
+                       "unsupported_dtypes":  [
+                                                  "float32",
+                                                  "int64"
+                                              ],
+                       "notes":  "Reviewed label: generic TFLM-like profile rejects this verified corpus model by int8/static-shape MCU constraints."
+                   },
+                   {
+                       "model_id":  "onnx-model-zoo-super-resolution-10",
+                       "target_id":  "esp32s3_custom_v1",
+                       "expected_status":  "fail",
+                       "unsupported_ops":  [
+                                               "Constant",
+                                               "Transpose"
+                                           ],
+                       "unsupported_dtypes":  [
+                                                  "float32",
+                                                  "int64"
+                                              ],
+                       "notes":  "Reviewed label: strict MCU profile rejects this verified corpus model by deployment-budget, dtype, shape, quantization, or operator constraints."
+                   },
+                   {
+                       "model_id":  "onnx-model-zoo-super-resolution-10",
+                       "target_id":  "ort_mobile_cpu_seed_v1",
+                       "expected_status":  "pass",
+                       "unsupported_ops":  [
+
+                                           ],
+                       "unsupported_dtypes":  [
+
+                                              ],
+                       "notes":  "Reviewed label: ORT mobile-like seed profile accepts this verified corpus model under the calibrated 20-model operator and memory boundary."
+                   },
+                   {
+                       "model_id":  "onnx-model-zoo-super-resolution-10",
+                       "target_id":  "tflm_micro_seed_v1",
+                       "expected_status":  "fail",
+                       "unsupported_ops":  [
+                                               "Constant",
+                                               "Transpose"
+                                           ],
+                       "unsupported_dtypes":  [
+                                                  "float32",
+                                                  "int64"
+                                              ],
+                       "notes":  "Reviewed label: generic TFLM-like profile rejects this verified corpus model by int8/static-shape MCU constraints."
+                   },
+                   {
+                       "model_id":  "onnx-model-zoo-mobilenetv2-12-int8",
+                       "target_id":  "esp32s3_custom_v1",
+                       "expected_status":  "fail",
+                       "unsupported_ops":  [
+                                               "Concat",
+                                               "DequantizeLinear",
+                                               "Gather",
+                                               "QLinearAdd",
+                                               "QLinearConv",
+                                               "QLinearGlobalAveragePool",
+                                               "QLinearMatMul",
+                                               "QuantizeLinear",
+                                               "Shape",
+                                               "Unsqueeze"
+                                           ],
+                       "unsupported_dtypes":  [
+                                                  "float32",
+                                                  "int32",
+                                                  "int64",
+                                                  "uint8"
+                                              ],
+                       "notes":  "Reviewed label: strict MCU profile rejects this verified corpus model by deployment-budget, dtype, shape, quantization, or operator constraints."
+                   },
+                   {
+                       "model_id":  "onnx-model-zoo-mobilenetv2-12-int8",
+                       "target_id":  "ort_mobile_cpu_seed_v1",
+                       "expected_status":  "pass",
+                       "unsupported_ops":  [
+
+                                           ],
+                       "unsupported_dtypes":  [
+
+                                              ],
+                       "notes":  "Reviewed label: ORT mobile-like seed profile accepts this verified corpus model under the calibrated 20-model operator and memory boundary."
+                   },
+                   {
+                       "model_id":  "onnx-model-zoo-mobilenetv2-12-int8",
+                       "target_id":  "tflm_micro_seed_v1",
+                       "expected_status":  "fail",
+                       "unsupported_ops":  [
+                                               "Concat",
+                                               "DequantizeLinear",
+                                               "Gather",
+                                               "QLinearAdd",
+                                               "QLinearConv",
+                                               "QLinearGlobalAveragePool",
+                                               "QLinearMatMul",
+                                               "QuantizeLinear",
+                                               "Shape",
+                                               "Unsqueeze"
+                                           ],
+                       "unsupported_dtypes":  [
+                                                  "float32",
+                                                  "int32",
+                                                  "int64",
+                                                  "uint8"
+                                              ],
+                       "notes":  "Reviewed label: generic TFLM-like profile rejects this verified corpus model by int8/static-shape MCU constraints."
+                   },
+                   {
+                       "model_id":  "onnx-model-zoo-ssd-mobilenet-v1-12-int8",
+                       "target_id":  "esp32s3_custom_v1",
+                       "expected_status":  "fail",
+                       "unsupported_ops":  [
+                                               "Cast",
+                                               "Concat",
+                                               "DequantizeLinear",
+                                               "Exp",
+                                               "Expand",
+                                               "Gather",
+                                               "Less",
+                                               "Loop",
+                                               "QLinearConv",
+                                               "QuantizeLinear",
+                                               "Shape",
+                                               "Sigmoid",
+                                               "Slice",
+                                               "Split",
+                                               "Squeeze",
+                                               "Sub",
+                                               "Tile",
+                                               "Transpose",
+                                               "Unsqueeze"
+                                           ],
+                       "unsupported_dtypes":  [
+                                                  "bool",
+                                                  "float32",
+                                                  "int32",
+                                                  "int64",
+                                                  "uint8"
+                                              ],
+                       "notes":  "Reviewed label: strict MCU profile rejects this verified corpus model by deployment-budget, dtype, shape, quantization, or operator constraints."
+                   },
+                   {
+                       "model_id":  "onnx-model-zoo-ssd-mobilenet-v1-12-int8",
+                       "target_id":  "ort_mobile_cpu_seed_v1",
+                       "expected_status":  "pass",
+                       "unsupported_ops":  [
+
+                                           ],
+                       "unsupported_dtypes":  [
+
+                                              ],
+                       "notes":  "Reviewed label: ORT mobile-like seed profile accepts this verified corpus model under the calibrated 20-model operator and memory boundary."
+                   },
+                   {
+                       "model_id":  "onnx-model-zoo-ssd-mobilenet-v1-12-int8",
+                       "target_id":  "tflm_micro_seed_v1",
+                       "expected_status":  "fail",
+                       "unsupported_ops":  [
+                                               "Cast",
+                                               "Concat",
+                                               "DequantizeLinear",
+                                               "Exp",
+                                               "Expand",
+                                               "Gather",
+                                               "Less",
+                                               "Loop",
+                                               "QLinearConv",
+                                               "QuantizeLinear",
+                                               "Shape",
+                                               "Sigmoid",
+                                               "Slice",
+                                               "Split",
+                                               "Squeeze",
+                                               "Sub",
+                                               "Tile",
+                                               "Transpose",
+                                               "Unsqueeze"
+                                           ],
+                       "unsupported_dtypes":  [
+                                                  "bool",
+                                                  "float32",
+                                                  "int32",
+                                                  "int64",
+                                                  "uint8"
+                                              ],
+                       "notes":  "Reviewed label: generic TFLM-like profile rejects this verified corpus model by int8/static-shape MCU constraints."
+                   },
+                   {
+                       "model_id":  "onnx-model-zoo-mnist-12-int8",
+                       "target_id":  "esp32s3_custom_v1",
+                       "expected_status":  "fail",
+                       "unsupported_ops":  [
+                                               "DequantizeLinear",
+                                               "MaxPool",
+                                               "QLinearAdd",
+                                               "QLinearConv",
+                                               "QLinearMatMul",
+                                               "QuantizeLinear"
+                                           ],
+                       "unsupported_dtypes":  [
+                                                  "float32",
+                                                  "int32",
+                                                  "int64",
+                                                  "uint8"
+                                              ],
+                       "notes":  "Reviewed label: strict MCU profile rejects this verified corpus model by deployment-budget, dtype, shape, quantization, or operator constraints."
+                   },
+                   {
+                       "model_id":  "onnx-model-zoo-mnist-12-int8",
+                       "target_id":  "ort_mobile_cpu_seed_v1",
+                       "expected_status":  "pass",
+                       "unsupported_ops":  [
+
+                                           ],
+                       "unsupported_dtypes":  [
+
+                                              ],
+                       "notes":  "Reviewed label: ORT mobile-like seed profile accepts this verified corpus model under the calibrated 20-model operator and memory boundary."
+                   },
+                   {
+                       "model_id":  "onnx-model-zoo-mnist-12-int8",
+                       "target_id":  "tflm_micro_seed_v1",
+                       "expected_status":  "fail",
+                       "unsupported_ops":  [
+                                               "DequantizeLinear",
+                                               "MaxPool",
+                                               "QLinearAdd",
+                                               "QLinearConv",
+                                               "QLinearMatMul",
+                                               "QuantizeLinear"
+                                           ],
+                       "unsupported_dtypes":  [
+                                                  "float32",
+                                                  "int32",
+                                                  "int64",
+                                                  "uint8"
+                                              ],
+                       "notes":  "Reviewed label: generic TFLM-like profile rejects this verified corpus model by int8/static-shape MCU constraints."
+                   },
+                   {
+                       "model_id":  "onnx-model-zoo-mnist-12",
+                       "target_id":  "esp32s3_custom_v1",
+                       "expected_status":  "fail",
+                       "unsupported_ops":  [
+                                               "MatMul",
+                                               "MaxPool"
+                                           ],
+                       "unsupported_dtypes":  [
+                                                  "float32",
+                                                  "int64"
+                                              ],
+                       "notes":  "Reviewed label: strict MCU profile rejects this verified corpus model by deployment-budget, dtype, shape, quantization, or operator constraints."
+                   },
+                   {
+                       "model_id":  "onnx-model-zoo-mnist-12",
+                       "target_id":  "ort_mobile_cpu_seed_v1",
+                       "expected_status":  "pass",
+                       "unsupported_ops":  [
+
+                                           ],
+                       "unsupported_dtypes":  [
+
+                                              ],
+                       "notes":  "Reviewed label: ORT mobile-like seed profile accepts this verified corpus model under the calibrated 20-model operator and memory boundary."
+                   },
+                   {
+                       "model_id":  "onnx-model-zoo-mnist-12",
+                       "target_id":  "tflm_micro_seed_v1",
+                       "expected_status":  "fail",
+                       "unsupported_ops":  [
+                                               "MatMul",
+                                               "MaxPool"
+                                           ],
+                       "unsupported_dtypes":  [
+                                                  "float32",
+                                                  "int64"
+                                              ],
+                       "notes":  "Reviewed label: generic TFLM-like profile rejects this verified corpus model by int8/static-shape MCU constraints."
+                   },
+                   {
+                       "model_id":  "onnx-model-zoo-mnist-7",
+                       "target_id":  "esp32s3_custom_v1",
+                       "expected_status":  "fail",
+                       "unsupported_ops":  [
+                                               "MatMul",
+                                               "MaxPool"
+                                           ],
+                       "unsupported_dtypes":  [
+                                                  "float32",
+                                                  "int64"
+                                              ],
+                       "notes":  "Reviewed label: strict MCU profile rejects this verified corpus model by deployment-budget, dtype, shape, quantization, or operator constraints."
+                   },
+                   {
+                       "model_id":  "onnx-model-zoo-mnist-7",
+                       "target_id":  "ort_mobile_cpu_seed_v1",
+                       "expected_status":  "pass",
+                       "unsupported_ops":  [
+
+                                           ],
+                       "unsupported_dtypes":  [
+
+                                              ],
+                       "notes":  "Reviewed label: ORT mobile-like seed profile accepts this verified corpus model under the calibrated 20-model operator and memory boundary."
+                   },
+                   {
+                       "model_id":  "onnx-model-zoo-mnist-7",
+                       "target_id":  "tflm_micro_seed_v1",
+                       "expected_status":  "fail",
+                       "unsupported_ops":  [
+                                               "MatMul",
+                                               "MaxPool"
+                                           ],
+                       "unsupported_dtypes":  [
+                                                  "float32",
+                                                  "int64"
+                                              ],
+                       "notes":  "Reviewed label: generic TFLM-like profile rejects this verified corpus model by int8/static-shape MCU constraints."
+                   },
+                   {
+                       "model_id":  "onnx-model-zoo-version-rfb-320-int8",
+                       "target_id":  "esp32s3_custom_v1",
+                       "expected_status":  "fail",
+                       "unsupported_ops":  [
+                                               "Concat",
+                                               "DequantizeLinear",
+                                               "Div",
+                                               "Exp",
+                                               "QLinearAdd",
+                                               "QLinearConcat",
+                                               "QLinearConv",
+                                               "QuantizeLinear",
+                                               "Slice",
+                                               "Sub",
+                                               "Transpose"
+                                           ],
+                       "unsupported_dtypes":  [
+                                                  "float32",
+                                                  "int32",
+                                                  "int64",
+                                                  "uint8"
+                                              ],
+                       "notes":  "Reviewed label: strict MCU profile rejects this verified corpus model by deployment-budget, dtype, shape, quantization, or operator constraints."
+                   },
+                   {
+                       "model_id":  "onnx-model-zoo-version-rfb-320-int8",
+                       "target_id":  "ort_mobile_cpu_seed_v1",
+                       "expected_status":  "pass",
+                       "unsupported_ops":  [
+
+                                           ],
+                       "unsupported_dtypes":  [
+
+                                              ],
+                       "notes":  "Reviewed label: ORT mobile-like seed profile accepts this verified corpus model under the calibrated 20-model operator and memory boundary."
+                   },
+                   {
+                       "model_id":  "onnx-model-zoo-version-rfb-320-int8",
+                       "target_id":  "tflm_micro_seed_v1",
+                       "expected_status":  "fail",
+                       "unsupported_ops":  [
+                                               "Concat",
+                                               "DequantizeLinear",
+                                               "Div",
+                                               "Exp",
+                                               "QLinearAdd",
+                                               "QLinearConcat",
+                                               "QLinearConv",
+                                               "QuantizeLinear",
+                                               "Slice",
+                                               "Sub",
+                                               "Transpose"
+                                           ],
+                       "unsupported_dtypes":  [
+                                                  "float32",
+                                                  "int32",
+                                                  "int64",
+                                                  "uint8"
+                                              ],
+                       "notes":  "Reviewed label: generic TFLM-like profile rejects this verified corpus model by int8/static-shape MCU constraints."
+                   },
+                   {
+                       "model_id":  "onnx-model-zoo-version-rfb-320",
+                       "target_id":  "esp32s3_custom_v1",
+                       "expected_status":  "fail",
+                       "unsupported_ops":  [
+                                               "BatchNormalization",
+                                               "Concat",
+                                               "Constant",
+                                               "Div",
+                                               "Exp",
+                                               "Gather",
+                                               "Shape",
+                                               "Slice",
+                                               "Sub",
+                                               "Transpose",
+                                               "Unsqueeze"
+                                           ],
+                       "unsupported_dtypes":  [
+                                                  "float32",
+                                                  "int64"
+                                              ],
+                       "notes":  "Reviewed label: strict MCU profile rejects this verified corpus model by deployment-budget, dtype, shape, quantization, or operator constraints."
+                   },
+                   {
+                       "model_id":  "onnx-model-zoo-version-rfb-320",
+                       "target_id":  "ort_mobile_cpu_seed_v1",
+                       "expected_status":  "pass",
+                       "unsupported_ops":  [
+
+                                           ],
+                       "unsupported_dtypes":  [
+
+                                              ],
+                       "notes":  "Reviewed label: ORT mobile-like seed profile accepts this verified corpus model under the calibrated 20-model operator and memory boundary."
+                   },
+                   {
+                       "model_id":  "onnx-model-zoo-version-rfb-320",
+                       "target_id":  "tflm_micro_seed_v1",
+                       "expected_status":  "fail",
+                       "unsupported_ops":  [
+                                               "BatchNormalization",
+                                               "Concat",
+                                               "Constant",
+                                               "Div",
+                                               "Exp",
+                                               "Gather",
+                                               "Shape",
+                                               "Slice",
+                                               "Sub",
+                                               "Transpose",
+                                               "Unsqueeze"
+                                           ],
+                       "unsupported_dtypes":  [
+                                                  "float32",
+                                                  "int64"
+                                              ],
+                       "notes":  "Reviewed label: generic TFLM-like profile rejects this verified corpus model by int8/static-shape MCU constraints."
+                   },
+                   {
+                       "model_id":  "onnx-model-zoo-squeezenet1.0-12-int8",
+                       "target_id":  "esp32s3_custom_v1",
+                       "expected_status":  "fail",
+                       "unsupported_ops":  [
+                                               "Concat",
+                                               "DequantizeLinear",
+                                               "MaxPool",
+                                               "QLinearConv",
+                                               "QLinearGlobalAveragePool",
+                                               "QuantizeLinear"
+                                           ],
+                       "unsupported_dtypes":  [
+                                                  "float32",
+                                                  "int32",
+                                                  "uint8"
+                                              ],
+                       "notes":  "Reviewed label: strict MCU profile rejects this verified corpus model by deployment-budget, dtype, shape, quantization, or operator constraints."
+                   },
+                   {
+                       "model_id":  "onnx-model-zoo-squeezenet1.0-12-int8",
+                       "target_id":  "ort_mobile_cpu_seed_v1",
+                       "expected_status":  "pass",
+                       "unsupported_ops":  [
+
+                                           ],
+                       "unsupported_dtypes":  [
+
+                                              ],
+                       "notes":  "Reviewed label: ORT mobile-like seed profile accepts this verified corpus model under the calibrated 20-model operator and memory boundary."
+                   },
+                   {
+                       "model_id":  "onnx-model-zoo-squeezenet1.0-12-int8",
+                       "target_id":  "tflm_micro_seed_v1",
+                       "expected_status":  "fail",
+                       "unsupported_ops":  [
+                                               "Concat",
+                                               "DequantizeLinear",
+                                               "MaxPool",
+                                               "QLinearConv",
+                                               "QLinearGlobalAveragePool",
+                                               "QuantizeLinear"
+                                           ],
+                       "unsupported_dtypes":  [
+                                                  "float32",
+                                                  "int32",
+                                                  "uint8"
+                                              ],
+                       "notes":  "Reviewed label: generic TFLM-like profile rejects this verified corpus model by int8/static-shape MCU constraints."
+                   },
+                   {
+                       "model_id":  "onnx-model-zoo-squeezenet1.0-13-qdq",
+                       "target_id":  "esp32s3_custom_v1",
+                       "expected_status":  "fail",
+                       "unsupported_ops":  [
+                                               "Concat",
+                                               "DequantizeLinear",
+                                               "Flatten",
+                                               "GlobalAveragePool",
+                                               "MaxPool",
+                                               "QuantizeLinear"
+                                           ],
+                       "unsupported_dtypes":  [
+                                                  "bool",
+                                                  "float32",
+                                                  "int32",
+                                                  "int64",
+                                                  "uint8"
+                                              ],
+                       "notes":  "Reviewed label: strict MCU profile rejects this verified corpus model by deployment-budget, dtype, shape, quantization, or operator constraints."
+                   },
+                   {
+                       "model_id":  "onnx-model-zoo-squeezenet1.0-13-qdq",
+                       "target_id":  "ort_mobile_cpu_seed_v1",
+                       "expected_status":  "pass",
+                       "unsupported_ops":  [
+
+                                           ],
+                       "unsupported_dtypes":  [
+
+                                              ],
+                       "notes":  "Reviewed label: ORT mobile-like seed profile accepts this verified corpus model under the calibrated 20-model operator and memory boundary."
+                   },
+                   {
+                       "model_id":  "onnx-model-zoo-squeezenet1.0-13-qdq",
+                       "target_id":  "tflm_micro_seed_v1",
+                       "expected_status":  "fail",
+                       "unsupported_ops":  [
+                                               "Concat",
+                                               "DequantizeLinear",
+                                               "Flatten",
+                                               "GlobalAveragePool",
+                                               "MaxPool",
+                                               "QuantizeLinear"
+                                           ],
+                       "unsupported_dtypes":  [
+                                                  "bool",
+                                                  "float32",
+                                                  "int32",
+                                                  "int64",
+                                                  "uint8"
+                                              ],
+                       "notes":  "Reviewed label: generic TFLM-like profile rejects this verified corpus model by int8/static-shape MCU constraints."
+                   },
+                   {
+                       "model_id":  "onnx-model-zoo-version-rfb-640",
+                       "target_id":  "esp32s3_custom_v1",
+                       "expected_status":  "fail",
+                       "unsupported_ops":  [
+                                               "BatchNormalization",
+                                               "Concat",
+                                               "Constant",
+                                               "Div",
+                                               "Exp",
+                                               "Gather",
+                                               "Shape",
+                                               "Slice",
+                                               "Sub",
+                                               "Transpose",
+                                               "Unsqueeze"
+                                           ],
+                       "unsupported_dtypes":  [
+                                                  "float32",
+                                                  "int64"
+                                              ],
+                       "notes":  "Reviewed label: strict MCU profile rejects this verified corpus model by deployment-budget, dtype, shape, quantization, or operator constraints."
+                   },
+                   {
+                       "model_id":  "onnx-model-zoo-version-rfb-640",
+                       "target_id":  "ort_mobile_cpu_seed_v1",
+                       "expected_status":  "pass",
+                       "unsupported_ops":  [
+
+                                           ],
+                       "unsupported_dtypes":  [
+
+                                              ],
+                       "notes":  "Reviewed label: ORT mobile-like seed profile accepts this verified corpus model under the calibrated 20-model operator and memory boundary."
+                   },
+                   {
+                       "model_id":  "onnx-model-zoo-version-rfb-640",
+                       "target_id":  "tflm_micro_seed_v1",
+                       "expected_status":  "fail",
+                       "unsupported_ops":  [
+                                               "BatchNormalization",
+                                               "Concat",
+                                               "Constant",
+                                               "Div",
+                                               "Exp",
+                                               "Gather",
+                                               "Shape",
+                                               "Slice",
+                                               "Sub",
+                                               "Transpose",
+                                               "Unsqueeze"
+                                           ],
+                       "unsupported_dtypes":  [
+                                                  "float32",
+                                                  "int64"
+                                              ],
+                       "notes":  "Reviewed label: generic TFLM-like profile rejects this verified corpus model by int8/static-shape MCU constraints."
+                   },
+                   {
+                       "model_id":  "onnx-model-zoo-shufflenet-v2-12-int8",
+                       "target_id":  "esp32s3_custom_v1",
+                       "expected_status":  "fail",
+                       "unsupported_ops":  [
+                                               "Concat",
+                                               "DequantizeLinear",
+                                               "MaxPool",
+                                               "QLinearAdd",
+                                               "QLinearConv",
+                                               "QLinearMatMul",
+                                               "QuantizeLinear",
+                                               "ReduceMean",
+                                               "Split",
+                                               "Transpose"
+                                           ],
+                       "unsupported_dtypes":  [
+                                                  "float32",
+                                                  "int32",
+                                                  "int64",
+                                                  "uint8"
+                                              ],
+                       "notes":  "Reviewed label: strict MCU profile rejects this verified corpus model by deployment-budget, dtype, shape, quantization, or operator constraints."
+                   },
+                   {
+                       "model_id":  "onnx-model-zoo-shufflenet-v2-12-int8",
+                       "target_id":  "ort_mobile_cpu_seed_v1",
+                       "expected_status":  "pass",
+                       "unsupported_ops":  [
+
+                                           ],
+                       "unsupported_dtypes":  [
+
+                                              ],
+                       "notes":  "Reviewed label: ORT mobile-like seed profile accepts this verified corpus model under the calibrated 20-model operator and memory boundary."
+                   },
+                   {
+                       "model_id":  "onnx-model-zoo-shufflenet-v2-12-int8",
+                       "target_id":  "tflm_micro_seed_v1",
+                       "expected_status":  "fail",
+                       "unsupported_ops":  [
+                                               "Concat",
+                                               "DequantizeLinear",
+                                               "MaxPool",
+                                               "QLinearAdd",
+                                               "QLinearConv",
+                                               "QLinearMatMul",
+                                               "QuantizeLinear",
+                                               "ReduceMean",
+                                               "Split",
+                                               "Transpose"
+                                           ],
+                       "unsupported_dtypes":  [
+                                                  "float32",
+                                                  "int32",
+                                                  "int64",
+                                                  "uint8"
+                                              ],
+                       "notes":  "Reviewed label: generic TFLM-like profile rejects this verified corpus model by int8/static-shape MCU constraints."
+                   },
+                   {
+                       "model_id":  "onnx-model-zoo-shufflenet-v2-12-qdq",
+                       "target_id":  "esp32s3_custom_v1",
+                       "expected_status":  "fail",
+                       "unsupported_ops":  [
+                                               "Concat",
+                                               "DequantizeLinear",
+                                               "MatMul",
+                                               "MaxPool",
+                                               "QuantizeLinear",
+                                               "ReduceMean",
+                                               "Split",
+                                               "Transpose"
+                                           ],
+                       "unsupported_dtypes":  [
+                                                  "float32",
+                                                  "int32",
+                                                  "int64",
+                                                  "uint8"
+                                              ],
+                       "notes":  "Reviewed label: strict MCU profile rejects this verified corpus model by deployment-budget, dtype, shape, quantization, or operator constraints."
+                   },
+                   {
+                       "model_id":  "onnx-model-zoo-shufflenet-v2-12-qdq",
+                       "target_id":  "ort_mobile_cpu_seed_v1",
+                       "expected_status":  "pass",
+                       "unsupported_ops":  [
+
+                                           ],
+                       "unsupported_dtypes":  [
+
+                                              ],
+                       "notes":  "Reviewed label: ORT mobile-like seed profile accepts this verified corpus model under the calibrated 20-model operator and memory boundary."
+                   },
+                   {
+                       "model_id":  "onnx-model-zoo-shufflenet-v2-12-qdq",
+                       "target_id":  "tflm_micro_seed_v1",
+                       "expected_status":  "fail",
+                       "unsupported_ops":  [
+                                               "Concat",
+                                               "DequantizeLinear",
+                                               "MatMul",
+                                               "MaxPool",
+                                               "QuantizeLinear",
+                                               "ReduceMean",
+                                               "Split",
+                                               "Transpose"
+                                           ],
+                       "unsupported_dtypes":  [
+                                                  "float32",
+                                                  "int32",
+                                                  "int64",
+                                                  "uint8"
+                                              ],
+                       "notes":  "Reviewed label: generic TFLM-like profile rejects this verified corpus model by int8/static-shape MCU constraints."
+                   },
+                   {
+                       "model_id":  "onnx-model-zoo-mobilenetv2-12-qdq",
+                       "target_id":  "esp32s3_custom_v1",
+                       "expected_status":  "fail",
+                       "unsupported_ops":  [
+                                               "Concat",
+                                               "DequantizeLinear",
+                                               "Gather",
+                                               "GlobalAveragePool",
+                                               "MatMul",
+                                               "QuantizeLinear",
+                                               "Shape",
+                                               "Unsqueeze"
+                                           ],
+                       "unsupported_dtypes":  [
+                                                  "float32",
+                                                  "int32",
+                                                  "int64",
+                                                  "uint8"
+                                              ],
+                       "notes":  "Reviewed label: strict MCU profile rejects this verified corpus model by deployment-budget, dtype, shape, quantization, or operator constraints."
+                   },
+                   {
+                       "model_id":  "onnx-model-zoo-mobilenetv2-12-qdq",
+                       "target_id":  "ort_mobile_cpu_seed_v1",
+                       "expected_status":  "pass",
+                       "unsupported_ops":  [
+
+                                           ],
+                       "unsupported_dtypes":  [
+
+                                              ],
+                       "notes":  "Reviewed label: ORT mobile-like seed profile accepts this verified corpus model under the calibrated 20-model operator and memory boundary."
+                   },
+                   {
+                       "model_id":  "onnx-model-zoo-mobilenetv2-12-qdq",
+                       "target_id":  "tflm_micro_seed_v1",
+                       "expected_status":  "fail",
+                       "unsupported_ops":  [
+                                               "Concat",
+                                               "DequantizeLinear",
+                                               "Gather",
+                                               "GlobalAveragePool",
+                                               "MatMul",
+                                               "QuantizeLinear",
+                                               "Shape",
+                                               "Unsqueeze"
+                                           ],
+                       "unsupported_dtypes":  [
+                                                  "float32",
+                                                  "int32",
+                                                  "int64",
+                                                  "uint8"
+                                              ],
+                       "notes":  "Reviewed label: generic TFLM-like profile rejects this verified corpus model by int8/static-shape MCU constraints."
+                   },
+                   {
+                       "model_id":  "onnx-model-zoo-squeezenet1.0-7",
+                       "target_id":  "esp32s3_custom_v1",
+                       "expected_status":  "fail",
+                       "unsupported_ops":  [
+                                               "Concat",
+                                               "Dropout",
+                                               "GlobalAveragePool",
+                                               "MaxPool"
+                                           ],
+                       "unsupported_dtypes":  [
+                                                  "float32"
+                                              ],
+                       "notes":  "Reviewed label: strict MCU profile rejects this verified corpus model by deployment-budget, dtype, shape, quantization, or operator constraints."
+                   },
+                   {
+                       "model_id":  "onnx-model-zoo-squeezenet1.0-7",
+                       "target_id":  "ort_mobile_cpu_seed_v1",
+                       "expected_status":  "pass",
+                       "unsupported_ops":  [
+
+                                           ],
+                       "unsupported_dtypes":  [
+
+                                              ],
+                       "notes":  "Reviewed label: ORT mobile-like seed profile accepts this verified corpus model under the calibrated 20-model operator and memory boundary."
+                   },
+                   {
+                       "model_id":  "onnx-model-zoo-squeezenet1.0-7",
+                       "target_id":  "tflm_micro_seed_v1",
+                       "expected_status":  "fail",
+                       "unsupported_ops":  [
+                                               "Concat",
+                                               "Dropout",
+                                               "GlobalAveragePool",
+                                               "MaxPool"
+                                           ],
+                       "unsupported_dtypes":  [
+                                                  "float32"
+                                              ],
+                       "notes":  "Reviewed label: generic TFLM-like profile rejects this verified corpus model by int8/static-shape MCU constraints."
+                   },
+                   {
+                       "model_id":  "onnx-model-zoo-squeezenet1.0-12",
+                       "target_id":  "esp32s3_custom_v1",
+                       "expected_status":  "fail",
+                       "unsupported_ops":  [
+                                               "Concat",
+                                               "Dropout",
+                                               "GlobalAveragePool",
+                                               "MaxPool"
+                                           ],
+                       "unsupported_dtypes":  [
+                                                  "bool",
+                                                  "float32"
+                                              ],
+                       "notes":  "Reviewed label: strict MCU profile rejects this verified corpus model by deployment-budget, dtype, shape, quantization, or operator constraints."
+                   },
+                   {
+                       "model_id":  "onnx-model-zoo-squeezenet1.0-12",
+                       "target_id":  "ort_mobile_cpu_seed_v1",
+                       "expected_status":  "pass",
+                       "unsupported_ops":  [
+
+                                           ],
+                       "unsupported_dtypes":  [
+
+                                              ],
+                       "notes":  "Reviewed label: ORT mobile-like seed profile accepts this verified corpus model under the calibrated 20-model operator and memory boundary."
+                   },
+                   {
+                       "model_id":  "onnx-model-zoo-squeezenet1.0-12",
+                       "target_id":  "tflm_micro_seed_v1",
+                       "expected_status":  "fail",
+                       "unsupported_ops":  [
+                                               "Concat",
+                                               "Dropout",
+                                               "GlobalAveragePool",
+                                               "MaxPool"
+                                           ],
+                       "unsupported_dtypes":  [
+                                                  "bool",
+                                                  "float32"
+                                              ],
+                       "notes":  "Reviewed label: generic TFLM-like profile rejects this verified corpus model by int8/static-shape MCU constraints."
+                   },
+                   {
+                       "model_id":  "onnx-model-zoo-squeezenet1.1-7",
+                       "target_id":  "esp32s3_custom_v1",
+                       "expected_status":  "fail",
+                       "unsupported_ops":  [
+                                               "AveragePool",
+                                               "Concat",
+                                               "Dropout",
+                                               "MaxPool"
+                                           ],
+                       "unsupported_dtypes":  [
+                                                  "float32",
+                                                  "int64"
+                                              ],
+                       "notes":  "Reviewed label: strict MCU profile rejects this verified corpus model by deployment-budget, dtype, shape, quantization, or operator constraints."
+                   },
+                   {
+                       "model_id":  "onnx-model-zoo-squeezenet1.1-7",
+                       "target_id":  "ort_mobile_cpu_seed_v1",
+                       "expected_status":  "pass",
+                       "unsupported_ops":  [
+
+                                           ],
+                       "unsupported_dtypes":  [
+
+                                              ],
+                       "notes":  "Reviewed label: ORT mobile-like seed profile accepts this verified corpus model under the calibrated 20-model operator and memory boundary."
+                   },
+                   {
+                       "model_id":  "onnx-model-zoo-squeezenet1.1-7",
+                       "target_id":  "tflm_micro_seed_v1",
+                       "expected_status":  "fail",
+                       "unsupported_ops":  [
+                                               "AveragePool",
+                                               "Concat",
+                                               "Dropout",
+                                               "MaxPool"
+                                           ],
+                       "unsupported_dtypes":  [
+                                                  "float32",
+                                                  "int64"
+                                              ],
+                       "notes":  "Reviewed label: generic TFLM-like profile rejects this verified corpus model by int8/static-shape MCU constraints."
+                   },
+                   {
+                       "model_id":  "onnx-model-zoo-shufflenet-7",
+                       "target_id":  "esp32s3_custom_v1",
+                       "expected_status":  "fail",
+                       "unsupported_ops":  [
+                                               "AveragePool",
+                                               "BatchNormalization",
+                                               "Concat",
+                                               "MaxPool",
+                                               "Sum",
+                                               "Transpose"
+                                           ],
+                       "unsupported_dtypes":  [
+                                                  "float32",
+                                                  "int64"
+                                              ],
+                       "notes":  "Reviewed label: strict MCU profile rejects this verified corpus model by deployment-budget, dtype, shape, quantization, or operator constraints."
+                   },
+                   {
+                       "model_id":  "onnx-model-zoo-shufflenet-7",
+                       "target_id":  "ort_mobile_cpu_seed_v1",
+                       "expected_status":  "pass",
+                       "unsupported_ops":  [
+
+                                           ],
+                       "unsupported_dtypes":  [
+
+                                              ],
+                       "notes":  "Reviewed label: ORT mobile-like seed profile accepts this verified corpus model under the calibrated 20-model operator and memory boundary."
+                   },
+                   {
+                       "model_id":  "onnx-model-zoo-shufflenet-7",
+                       "target_id":  "tflm_micro_seed_v1",
+                       "expected_status":  "fail",
+                       "unsupported_ops":  [
+                                               "AveragePool",
+                                               "BatchNormalization",
+                                               "Concat",
+                                               "MaxPool",
+                                               "Sum",
+                                               "Transpose"
+                                           ],
+                       "unsupported_dtypes":  [
+                                                  "float32",
+                                                  "int64"
+                                              ],
+                       "notes":  "Reviewed label: generic TFLM-like profile rejects this verified corpus model by int8/static-shape MCU constraints."
+                   },
+                   {
+                       "model_id":  "onnx-model-zoo-shufflenet-8",
+                       "target_id":  "esp32s3_custom_v1",
+                       "expected_status":  "fail",
+                       "unsupported_ops":  [
+                                               "AveragePool",
+                                               "BatchNormalization",
+                                               "Concat",
+                                               "MaxPool",
+                                               "Sum",
+                                               "Transpose"
+                                           ],
+                       "unsupported_dtypes":  [
+                                                  "float32",
+                                                  "int64"
+                                              ],
+                       "notes":  "Reviewed label: strict MCU profile rejects this verified corpus model by deployment-budget, dtype, shape, quantization, or operator constraints."
+                   },
+                   {
+                       "model_id":  "onnx-model-zoo-shufflenet-8",
+                       "target_id":  "ort_mobile_cpu_seed_v1",
+                       "expected_status":  "pass",
+                       "unsupported_ops":  [
+
+                                           ],
+                       "unsupported_dtypes":  [
+
+                                              ],
+                       "notes":  "Reviewed label: ORT mobile-like seed profile accepts this verified corpus model under the calibrated 20-model operator and memory boundary."
+                   },
+                   {
+                       "model_id":  "onnx-model-zoo-shufflenet-8",
+                       "target_id":  "tflm_micro_seed_v1",
+                       "expected_status":  "fail",
+                       "unsupported_ops":  [
+                                               "AveragePool",
+                                               "BatchNormalization",
+                                               "Concat",
+                                               "MaxPool",
+                                               "Sum",
+                                               "Transpose"
+                                           ],
+                       "unsupported_dtypes":  [
+                                                  "float32",
+                                                  "int64"
+                                              ],
+                       "notes":  "Reviewed label: generic TFLM-like profile rejects this verified corpus model by int8/static-shape MCU constraints."
+                   }
+               ]
+}

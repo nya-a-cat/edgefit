@@ -1,0 +1,68 @@
+{
+  "schema": "edgefit.competitive_benchmark_manifest.v1",
+  "corpus_manifest": "../onnx-normalize/real_world_corpus.json",
+  "corpus_cache": "../../tmp/real_world_corpus",
+  "default_target": "../../targets/ort-mobile-cpu.yaml",
+  "cases": [
+    {
+      "id": "mnist-fp32-opset8",
+      "model_id": "onnx-model-zoo-mnist-8",
+      "purpose": "small static fp32 baseline",
+      "tags": ["fp32", "static", "small"]
+    },
+    {
+      "id": "mnist-int8-qoperator",
+      "model_id": "onnx-model-zoo-mnist-12-int8",
+      "purpose": "small QOperator quantization baseline",
+      "tags": ["int8", "qoperator", "static", "small"]
+    },
+    {
+      "id": "super-resolution-dynamic",
+      "model_id": "onnx-model-zoo-super-resolution-10",
+      "purpose": "symbolic batch dimension and large activation tensors",
+      "tags": ["fp32", "dynamic-shape", "vision"]
+    },
+    {
+      "id": "mobilenetv2-int8-qoperator",
+      "model_id": "onnx-model-zoo-mobilenetv2-12-int8",
+      "purpose": "real-world int8 model with Microsoft-domain quantized operators",
+      "tags": ["int8", "qoperator", "custom-domain", "vision"]
+    },
+    {
+      "id": "mobilenetv2-int8-qdq",
+      "model_id": "onnx-model-zoo-mobilenetv2-12-qdq",
+      "purpose": "same model family expressed with QDQ quantization",
+      "tags": ["int8", "qdq", "vision"]
+    },
+    {
+      "id": "ssd-mobilenet-control-flow",
+      "model_id": "onnx-model-zoo-ssd-mobilenet-v1-12-int8",
+      "purpose": "control-flow and dynamic-shape failure boundary",
+      "tags": ["int8", "control-flow", "dynamic-shape", "vision"]
+    },
+    {
+      "id": "squeezenet-fp32-opset12",
+      "model_id": "onnx-model-zoo-squeezenet1.0-12",
+      "purpose": "medium static fp32 vision baseline",
+      "tags": ["fp32", "static", "vision"]
+    },
+    {
+      "id": "squeezenet-int8-qoperator",
+      "model_id": "onnx-model-zoo-squeezenet1.0-12-int8",
+      "purpose": "QOperator comparison against the fp32 model family",
+      "tags": ["int8", "qoperator", "vision"]
+    },
+    {
+      "id": "squeezenet-int8-qdq",
+      "model_id": "onnx-model-zoo-squeezenet1.0-13-qdq",
+      "purpose": "QDQ and newer opset comparison against the same model family",
+      "tags": ["int8", "qdq", "opset13", "vision"]
+    },
+    {
+      "id": "version-rfb-320-fp32",
+      "model_id": "onnx-model-zoo-version-rfb-320",
+      "purpose": "larger object-detection graph and operator coverage stress case",
+      "tags": ["fp32", "object-detection", "vision"]
+    }
+  ]
+}

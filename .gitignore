@@ -1,0 +1,40 @@
+﻿/target/
+/.edgefit/
+/reports/
+*.py[cod]
+__pycache__/
+.pytest_cache/
+.coverage
+dist/
+build/
+/.venv/
+/.uv-cache/
+/tmp/
+
+# 本机环境与编辑器生成文件
+.env
+.env.*
+!.env.example
+.DS_Store
+Thumbs.db
+/.agents/
+/.codex/
+
+# 仅保留在本地的内部资料，不进入公开仓库
+*.docx
+/progress.md
+/ROADMAP.md
+/docs/reference/
+/docs/DISK_USAGE_POLICY.md
+/docs/DOCUMENT_ALIGNMENT.md
+/docs/DEMO_PR_TRIALS.md
+/docs/OPERATOR_SUPPORT_AUDIT.md
+/docs/ORT_RUNTIME_BOUNDARY.md
+/docs/PROFILE_CONFIDENCE_REVIEW.md
+/docs/PUBLIC_PR_TRIALS.md
+/docs/public_pr_trials.json
+
+# 依赖内部调研报告的本地实施审计入口
+/tools/implementation_audit.py
+/tools/test_implementation_audit.py
+

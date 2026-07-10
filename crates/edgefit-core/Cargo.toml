@@ -1,0 +1,16 @@
+﻿[package]
+name = "edgefit-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+edgefit-analyze = { path = "../edgefit-analyze" }
+edgefit-ir = { path = "../edgefit-ir" }
+edgefit-policy = { path = "../edgefit-policy" }
+edgefit-report = { path = "../edgefit-report" }
+edgefit-target = { path = "../edgefit-target" }
+
+[lib]
+path = "src/lib.rs"

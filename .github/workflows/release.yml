@@ -1,0 +1,148 @@
+name: Release candidate
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: version
+        name: Read and validate version
+        shell: bash
+        run: |
+          version="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n 1)"
+          test -n "$version"
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            test "$GITHUB_REF_NAME" = "v$version"
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+  linux:
+    needs: prepare
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build and verify
+        run: |
+          cargo build --workspace --release --locked
+          target/release/edgefit --version
+          target/release/edgefit target validate targets/esp32s3.yaml
+          target/release/edgefit check examples/models/good_tiny.edgefit.json --target targets/esp32s3.yaml
+      - name: Package
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          package="edgefit-$VERSION-linux-x86_64"
+          mkdir -p "$package"
+          cp target/release/edgefit README.md LICENSE requirements-onnx.txt "$package/"
+          cp -R targets "$package/targets"
+          tar -czf "$package.tar.gz" "$package"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-package
+          path: edgefit-*.tar.gz
+
+  windows:
+    needs: prepare
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build and verify
+        run: |
+          cargo build --workspace --release --locked
+          target/release/edgefit.exe --version
+          target/release/edgefit.exe target validate targets/esp32s3.yaml
+          target/release/edgefit.exe check examples/models/good_tiny.edgefit.json --target targets/esp32s3.yaml
+      - name: Package
+        shell: pwsh
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          $package = "edgefit-$env:VERSION-windows-x86_64"
+          New-Item -ItemType Directory -Path $package | Out-Null
+          Copy-Item target/release/edgefit.exe, README.md, LICENSE, requirements-onnx.txt -Destination $package
+          Copy-Item targets -Destination "$package/targets" -Recurse
+          Compress-Archive -Path $package -DestinationPath "$package.zip"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-package
+          path: edgefit-*.zip
+
+  macos:
+    needs: prepare
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+      - name: Build universal binary and verify
+        run: |
+          cargo build --workspace --release --locked --target aarch64-apple-darwin
+          cargo build --workspace --release --locked --target x86_64-apple-darwin
+          mkdir -p target/universal2/release
+          lipo -create \
+            target/aarch64-apple-darwin/release/edgefit \
+            target/x86_64-apple-darwin/release/edgefit \
+            -output target/universal2/release/edgefit
+          target/universal2/release/edgefit --version
+          target/universal2/release/edgefit target validate targets/esp32s3.yaml
+          target/universal2/release/edgefit check examples/models/good_tiny.edgefit.json --target targets/esp32s3.yaml
+      - name: Package
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          package="edgefit-$VERSION-macos-universal2"
+          mkdir -p "$package"
+          cp target/universal2/release/edgefit README.md LICENSE requirements-onnx.txt "$package/"
+          cp -R targets "$package/targets"
+          tar -czf "$package.tar.gz" "$package"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-package
+          path: edgefit-*.tar.gz
+
+  bundle:
+    needs: [prepare, linux, windows, macos]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: "*-package"
+          merge-multiple: true
+          path: dist
+      - name: Generate checksums
+        working-directory: dist
+        run: sha256sum edgefit-* > SHA256SUMS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: edgefit-release-candidate
+          path: dist/*
+
+  publish:
+    if: ${{ startsWith(github.ref, 'refs/tags/v') }}
+    needs: [prepare, bundle]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: edgefit-release-candidate
+          path: dist
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" dist/* --verify-tag --generate-notes --title "EdgeFit $GITHUB_REF_NAME"

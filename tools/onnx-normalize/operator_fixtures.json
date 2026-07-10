@@ -1,0 +1,29 @@
+{
+  "schema": "edgefit.operator_fixtures.v1",
+  "models": [
+    {
+      "id": "toy-gemm-reference",
+      "builder": "Gemm",
+      "expected_ops": ["Gemm"],
+      "expected_outputs": [
+        {"name": "z", "dtype": "float32", "shape": [1, 2]}
+      ]
+    },
+    {
+      "id": "toy-resize-reference",
+      "builder": "Resize",
+      "expected_ops": ["Resize"],
+      "expected_outputs": [
+        {"name": "z", "dtype": "float32", "shape": [1, 1, 4, 4]}
+      ]
+    },
+    {
+      "id": "toy-softmax-reference",
+      "builder": "Softmax",
+      "expected_ops": ["Softmax"],
+      "expected_outputs": [
+        {"name": "z", "dtype": "float32", "shape": [1, 4]}
+      ]
+    }
+  ]
+}

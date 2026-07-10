@@ -1,0 +1,39 @@
+{
+  "schema": "edgefit.normalized_model.v1",
+  "model": {
+    "path": "models/tiny.onnx",
+    "file_bytes": 490000,
+    "sha256": "sha256:good-tiny-example"
+  },
+  "graph": {
+    "inputs": [
+      { "name": "input", "dtype": "int8", "shape": [1, 1, 28, 28] }
+    ],
+    "values": [
+      { "name": "dense", "dtype": "int8", "shape": [1, 10] }
+    ],
+    "outputs": [
+      { "name": "prob", "dtype": "int8", "shape": [1, 10] }
+    ],
+    "initializers": [
+      { "name": "dense.weight", "dtype": "int8", "shape": [10, 784], "bytes": 7840 }
+    ],
+    "nodes": [
+      {
+        "name": "gemm_0",
+        "domain": "ai.onnx",
+        "op_type": "Gemm",
+        "inputs": ["input", "dense.weight"],
+        "outputs": ["dense"]
+      },
+      {
+        "name": "softmax_0",
+        "domain": "ai.onnx",
+        "op_type": "Softmax",
+        "inputs": ["dense"],
+        "outputs": ["prob"]
+      }
+    ]
+  }
+}
+

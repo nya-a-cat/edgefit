@@ -1,0 +1,66 @@
+﻿profile_version: edgefit.target.v1
+
+metadata:
+  source: EdgeFit feasibility report MVP seed profile; conservative ONNX opset boundary reviewed against the current EdgeFit corpus
+  confidence: seed
+  last_verified: 2026-07-10
+
+target:
+  id: esp32s3_custom_v1
+  name: ESP32-S3 Custom Board
+  class: mcu
+
+memory:
+  flash_bytes: 2097152
+  ram_bytes: 524288
+  model_file_budget_bytes: 1500000
+  peak_activation_budget_bytes: 350000
+  weights_residency: flash
+
+runtime:
+  name: tflm-like
+  static_shapes_required: true
+  dynamic_allocation_allowed: false
+  external_memory_allowed: false
+
+dtype:
+  allowed: [int8]
+  preferred: int8
+  fp32_allowed: false
+
+# 该 seed 上限只表示当前审计语料边界，不代表目标运行时的完整 ONNX 能力。
+opsets:
+  ai.onnx: 13
+
+ops:
+  allow:
+    ai.onnx:
+      Conv:
+        dtypes: [int8]
+        max_rank: 4
+      Relu:
+        dtypes: [int8]
+      Add:
+        dtypes: [int8]
+      Mul:
+        dtypes: [int8]
+      Reshape:
+        dtypes: [int8]
+      Gemm:
+        dtypes: [int8]
+      Softmax:
+        dtypes: [int8]
+
+shape:
+  max_rank: 4
+  allow_unknown_dims: false
+  symbols:
+    N: { max: 1 }
+    H: { max: 224 }
+    W: { max: 224 }
+
+quantization:
+  required: true
+  require_int8: true
+  min_quantized_weight_fraction: 0.95
+  min_operator_coverage: 1.0

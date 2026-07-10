@@ -1,0 +1,38 @@
+﻿{
+  "schema": "edgefit.normalized_model.v1",
+  "model": {
+    "path": "models/rank_dynamic.onnx",
+    "file_bytes": 320000,
+    "sha256": "sha256:rank-dynamic-example"
+  },
+  "graph": {
+    "inputs": [
+      { "name": "input", "dtype": "int8", "shape": [1, "N", 3, 32, 32] }
+    ],
+    "values": [
+      { "name": "conv_out", "dtype": "int8", "shape": [1, 16, 32, 32, 1] }
+    ],
+    "outputs": [
+      { "name": "logits", "dtype": "int8", "shape": [1, 16, 32, 32, 1] }
+    ],
+    "initializers": [
+      { "name": "conv.weight", "dtype": "int8", "shape": [16, 3, 3, 3], "bytes": 432 }
+    ],
+    "nodes": [
+      {
+        "name": "conv_rank5",
+        "domain": "ai.onnx",
+        "op_type": "Conv",
+        "inputs": ["input", "conv.weight"],
+        "outputs": ["conv_out"]
+      },
+      {
+        "name": "relu_rank5",
+        "domain": "ai.onnx",
+        "op_type": "Relu",
+        "inputs": ["conv_out"],
+        "outputs": ["logits"]
+      }
+    ]
+  }
+}

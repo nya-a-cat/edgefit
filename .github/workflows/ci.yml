@@ -1,0 +1,86 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  rust:
+    name: Rust (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-14]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+      - name: Run tests
+        run: cargo test --workspace --locked
+
+  python:
+    name: ONNX adapter (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-14]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: tools/onnx-normalize/requirements.txt
+      - name: Install ONNX dependency
+        run: python -m pip install -r tools/onnx-normalize/requirements.txt
+      - name: Run ONNX adapter tests
+        run: python -m unittest discover -s tools/onnx-normalize -p "test_*.py"
+
+  action-smoke:
+    name: Composite Action smoke
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run the local EdgeFit Action
+        uses: ./
+        with:
+          model: examples/models/good_tiny.edgefit.json
+          target: targets/esp32s3.yaml
+          report: edgefit.sarif
+          summary: edgefit-summary.md
+          install-onnx: "false"
+      - name: Upload smoke reports
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: edgefit-action-smoke
+          path: |
+            edgefit.sarif
+            edgefit-summary.md
+          if-no-files-found: error
+
+  ci-gate:
+    name: ci-gate
+    if: ${{ always() }}
+    needs: [rust, python, action-smoke]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Enforce required jobs
+        env:
+          RUST_RESULT: ${{ needs.rust.result }}
+          PYTHON_RESULT: ${{ needs.python.result }}
+          ACTION_RESULT: ${{ needs.action-smoke.result }}
+        run: |
+          test "$RUST_RESULT" = success
+          test "$PYTHON_RESULT" = success
+          test "$ACTION_RESULT" = success

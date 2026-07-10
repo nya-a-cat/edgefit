@@ -1,0 +1,161 @@
+profile_version: edgefit.target.v1
+
+metadata:
+  source: EdgeFit feasibility report seed profile; conservative ONNX and Microsoft-domain opset boundaries reviewed against the current EdgeFit corpus
+  confidence: seed
+  last_verified: 2026-07-10
+
+target:
+  id: ort_mobile_cpu_seed_v1
+  name: ONNX Runtime Mobile CPU Seed
+  class: edge-cpu
+
+memory:
+  flash_bytes: 33554432
+  ram_bytes: 67108864
+  model_file_budget_bytes: 20000000
+  peak_activation_budget_bytes: 25165824
+  weights_residency: file
+
+runtime:
+  name: ort-mobile-like
+  static_shapes_required: false
+  dynamic_allocation_allowed: true
+  external_memory_allowed: true
+
+dtype:
+  allowed: [float32, int8, uint8, int32, int64, bool]
+  preferred: float32
+  fp32_allowed: true
+
+# 这些 seed 上限只覆盖当前证据集；提升上限前必须重新核验部署运行时。
+opsets:
+  ai.onnx: 13
+  com.microsoft: 1
+
+ops:
+  allow:
+    ai.onnx:
+      Add:
+        dtypes: [float32, int8, uint8, int64]
+      Conv:
+        dtypes: [float32, int8, uint8]
+        max_rank: 8
+      Relu:
+        dtypes: [float32, int8, uint8]
+      Mul:
+        dtypes: [float32, int8, uint8, int32, int64]
+      Gemm:
+        dtypes: [float32, int8, uint8]
+      MatMul:
+        dtypes: [float32, int8, uint8]
+        max_rank: 8
+      MaxPool:
+        dtypes: [float32, int8, uint8]
+        max_rank: 8
+      Reshape:
+        dtypes: [float32, int8, uint8, int64]
+        max_rank: 8
+      Resize:
+        dtypes: [float32, int8, uint8, int64]
+        max_rank: 8
+      Softmax:
+        dtypes: [float32, int8, uint8]
+      Transpose:
+        dtypes: [float32, int8, uint8]
+        max_rank: 8
+      Constant:
+        dtypes: [float32, int8, uint8, int64]
+      QLinearMatMul:
+        dtypes: [float32, int8, uint8, int32]
+      QLinearConv:
+        dtypes: [float32, int8, uint8, int32]
+        max_rank: 8
+      QuantizeLinear:
+        dtypes: [float32, int8, uint8]
+      DequantizeLinear:
+        dtypes: [float32, int8, uint8, int32]
+      Shape:
+        dtypes: [float32, int8, uint8, int32, int64]
+      Gather:
+        dtypes: [float32, int8, uint8, int32, int64]
+      Unsqueeze:
+        dtypes: [float32, int8, uint8, int32, int64]
+        max_rank: 8
+      Concat:
+        dtypes: [float32, int8, uint8, int32, int64]
+        max_rank: 8
+      Cast:
+        dtypes: [float32, int8, uint8, int32, int64, bool]
+      Exp:
+        dtypes: [float32]
+      Expand:
+        dtypes: [float32, int8, uint8, int32, int64, bool]
+        max_rank: 8
+      Less:
+        dtypes: [float32, int32, int64, bool]
+      Loop:
+        dtypes: [float32, int8, uint8, int32, int64, bool]
+      Sigmoid:
+        dtypes: [float32, int8, uint8]
+      Slice:
+        dtypes: [float32, int8, uint8, int32, int64]
+        max_rank: 8
+      Split:
+        dtypes: [float32, int8, uint8, int32, int64]
+        max_rank: 8
+      Squeeze:
+        dtypes: [float32, int8, uint8, int32, int64]
+        max_rank: 8
+      Sub:
+        dtypes: [float32, int32, int64]
+      Tile:
+        dtypes: [float32, int8, uint8, int32, int64, bool]
+        max_rank: 8
+      Div:
+        dtypes: [float32, int32, int64]
+      BatchNormalization:
+        dtypes: [float32]
+        max_rank: 8
+      Flatten:
+        dtypes: [float32, int8, uint8]
+        max_rank: 8
+      GlobalAveragePool:
+        dtypes: [float32, int8, uint8]
+        max_rank: 8
+      ReduceMean:
+        dtypes: [float32, int8, uint8]
+        max_rank: 8
+      Dropout:
+        dtypes: [float32, bool]
+        max_rank: 8
+      AveragePool:
+        dtypes: [float32, int8, uint8]
+        max_rank: 8
+      Sum:
+        dtypes: [float32, int8, uint8]
+        max_rank: 8
+
+    com.microsoft:
+      QLinearAdd:
+        dtypes: [float32, int8, uint8, int32]
+      QLinearGlobalAveragePool:
+        dtypes: [float32, int8, uint8, int32]
+        max_rank: 8
+      QLinearConcat:
+        dtypes: [float32, int8, uint8, int32]
+        max_rank: 8
+shape:
+  max_rank: 8
+  allow_unknown_dims: true
+  symbols:
+    N: { max: 32 }
+    batch_size: { max: 32 }
+    H: { max: 1024 }
+    W: { max: 1024 }
+
+quantization:
+  required: false
+  require_int8: false
+  min_quantized_weight_fraction: 0.0
+  min_operator_coverage: 0.0

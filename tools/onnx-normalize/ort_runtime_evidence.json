@@ -1,0 +1,174 @@
+{
+    "schema":  "edgefit.ort_runtime_evidence.v1",
+    "source":  {
+                   "repo":  "https://github.com/microsoft/onnxruntime",
+                   "commit":  "c57e0e50ad068905a4140d361b0b3fd8c251e540",
+                   "checked_at":  "2026-07-09"
+               },
+    "domain_definitions":  [
+                               {
+                                   "id":  "ort-kmsdomain-definition",
+                                   "source_file":  "onnxruntime/core/providers/shared_library/provider_api.h",
+                                   "source_url":  "https://github.com/microsoft/onnxruntime/blob/c57e0e50ad068905a4140d361b0b3fd8c251e540/onnxruntime/core/providers/shared_library/provider_api.h",
+                                   "contains":  [
+                                                    "constexpr const char* kMSDomain = \"com.microsoft\";"
+                                                ]
+                               }
+                           ],
+    "operators":  [
+                      {
+                          "op_key":  "com.microsoft::QLinearAdd",
+                          "runtime_evidence":  [
+                                                   {
+                                                       "id":  "ort-cpu-qlinearadd-kernel-registration",
+                                                       "provider":  "CPUExecutionProvider",
+                                                       "source_file":  "onnxruntime/contrib_ops/cpu/cpu_contrib_kernels.cc",
+                                                       "source_url":  "https://github.com/microsoft/onnxruntime/blob/c57e0e50ad068905a4140d361b0b3fd8c251e540/onnxruntime/contrib_ops/cpu/cpu_contrib_kernels.cc",
+                                                       "line_hints":  [
+                                                                          105,
+                                                                          106,
+                                                                          273,
+                                                                          274
+                                                                      ],
+                                                       "contains":  [
+                                                                        "ONNX_OPERATOR_TYPED_KERNEL_CLASS_NAME(kCpuExecutionProvider, kMSDomain, 1, uint8_t, QLinearAdd)",
+                                                                        "ONNX_OPERATOR_TYPED_KERNEL_CLASS_NAME(kCpuExecutionProvider, kMSDomain, 1, int8_t, QLinearAdd)",
+                                                                        "BuildKernelCreateInfo\u003cONNX_OPERATOR_TYPED_KERNEL_CLASS_NAME(kCpuExecutionProvider, kMSDomain, 1, uint8_t, QLinearAdd)\u003e",
+                                                                        "BuildKernelCreateInfo\u003cONNX_OPERATOR_TYPED_KERNEL_CLASS_NAME(kCpuExecutionProvider, kMSDomain, 1, int8_t, QLinearAdd)\u003e"
+                                                                    ]
+                                                   },
+                                                   {
+                                                       "id":  "ort-cpu-qlinearadd-implementation",
+                                                       "provider":  "CPUExecutionProvider",
+                                                       "source_file":  "onnxruntime/contrib_ops/cpu/quantization/qlinear_binary_op.cc",
+                                                       "source_url":  "https://github.com/microsoft/onnxruntime/blob/c57e0e50ad068905a4140d361b0b3fd8c251e540/onnxruntime/contrib_ops/cpu/quantization/qlinear_binary_op.cc",
+                                                       "line_hints":  [
+                                                                          97,
+                                                                          197,
+                                                                          198
+                                                                      ],
+                                                       "contains":  [
+                                                                        "Status QLinearAdd\u003cT\u003e::Compute(OpKernelContext* context) const",
+                                                                        "REG_QLINEAR_ELEMENTWISE_TYPED_KERNEL(QLinearAdd, 1, int8_t, QLinearAdd);",
+                                                                        "REG_QLINEAR_ELEMENTWISE_TYPED_KERNEL(QLinearAdd, 1, uint8_t, QLinearAdd);"
+                                                                    ]
+                                                   },
+                                                   {
+                                                       "id":  "ort-dml-qlinearadd-supported-registration",
+                                                       "provider":  "DmlExecutionProvider",
+                                                       "source_file":  "onnxruntime/core/providers/dml/DmlExecutionProvider/src/Operators/OperatorRegistration.cpp",
+                                                       "source_url":  "https://github.com/microsoft/onnxruntime/blob/c57e0e50ad068905a4140d361b0b3fd8c251e540/onnxruntime/core/providers/dml/DmlExecutionProvider/src/Operators/OperatorRegistration.cpp",
+                                                       "line_hints":  [
+                                                                          512,
+                                                                          1158
+                                                                      ],
+                                                       "contains":  [
+                                                                        "DML_OP_EXTERN_CREATION_FUNCTION(QLinearAdd);",
+                                                                        "REG_INFO_MS(  1,   QLinearAdd",
+                                                                        "DmlGraphSupport::Supported"
+                                                                    ]
+                                                   }
+                                               ]
+                      },
+                      {
+                          "op_key":  "com.microsoft::QLinearGlobalAveragePool",
+                          "runtime_evidence":  [
+                                                   {
+                                                       "id":  "ort-cpu-qlinearglobalaveragepool-kernel-registration",
+                                                       "provider":  "CPUExecutionProvider",
+                                                       "source_file":  "onnxruntime/contrib_ops/cpu/cpu_contrib_kernels.cc",
+                                                       "source_url":  "https://github.com/microsoft/onnxruntime/blob/c57e0e50ad068905a4140d361b0b3fd8c251e540/onnxruntime/contrib_ops/cpu/cpu_contrib_kernels.cc",
+                                                       "line_hints":  [
+                                                                          83,
+                                                                          238
+                                                                      ],
+                                                       "contains":  [
+                                                                        "ONNX_OPERATOR_KERNEL_CLASS_NAME(kCpuExecutionProvider, kMSDomain, 1, QLinearGlobalAveragePool)",
+                                                                        "BuildKernelCreateInfo\u003cONNX_OPERATOR_KERNEL_CLASS_NAME(kCpuExecutionProvider, kMSDomain, 1, QLinearGlobalAveragePool)\u003e"
+                                                                    ]
+                                                   },
+                                                   {
+                                                       "id":  "ort-cpu-qlinearglobalaveragepool-implementation",
+                                                       "provider":  "CPUExecutionProvider",
+                                                       "source_file":  "onnxruntime/contrib_ops/cpu/quantization/qlinear_global_average_pool.cc",
+                                                       "source_url":  "https://github.com/microsoft/onnxruntime/blob/c57e0e50ad068905a4140d361b0b3fd8c251e540/onnxruntime/contrib_ops/cpu/quantization/qlinear_global_average_pool.cc",
+                                                       "line_hints":  [
+                                                                          90,
+                                                                          138,
+                                                                          139,
+                                                                          143
+                                                                      ],
+                                                       "contains":  [
+                                                                        "Status QLinearGlobalAveragePool::Compute(OpKernelContext* context) const",
+                                                                        "ONNX_OPERATOR_KERNEL_EX(QLinearGlobalAveragePool,",
+                                                                        "kMSDomain,",
+                                                                        "QLinearGlobalAveragePool);"
+                                                                    ]
+                                                   },
+                                                   {
+                                                       "id":  "ort-dml-qlinearglobalaveragepool-supported-registration",
+                                                       "provider":  "DmlExecutionProvider",
+                                                       "source_file":  "onnxruntime/core/providers/dml/DmlExecutionProvider/src/Operators/OperatorRegistration.cpp",
+                                                       "source_url":  "https://github.com/microsoft/onnxruntime/blob/c57e0e50ad068905a4140d361b0b3fd8c251e540/onnxruntime/core/providers/dml/DmlExecutionProvider/src/Operators/OperatorRegistration.cpp",
+                                                       "line_hints":  [
+                                                                          328,
+                                                                          1157
+                                                                      ],
+                                                       "contains":  [
+                                                                        "DML_OP_EXTERN_CREATION_FUNCTION(QLinearGlobalAveragePool);",
+                                                                        "REG_INFO_MS(  1,   QLinearGlobalAveragePool",
+                                                                        "DmlGraphSupport::Supported"
+                                                                    ]
+                                                   }
+                                               ]
+                      },
+                      {
+                          "op_key":  "com.microsoft::QLinearConcat",
+                          "runtime_evidence":  [
+                                                   {
+                                                       "id":  "ort-cpu-qlinearconcat-kernel-registration",
+                                                       "provider":  "CPUExecutionProvider",
+                                                       "source_file":  "onnxruntime/contrib_ops/cpu/cpu_contrib_kernels.cc",
+                                                       "source_url":  "https://github.com/microsoft/onnxruntime/blob/c57e0e50ad068905a4140d361b0b3fd8c251e540/onnxruntime/contrib_ops/cpu/cpu_contrib_kernels.cc",
+                                                       "line_hints":  [
+                                                                          84,
+                                                                          239
+                                                                      ],
+                                                       "contains":  [
+                                                                        "ONNX_OPERATOR_KERNEL_CLASS_NAME(kCpuExecutionProvider, kMSDomain, 1, QLinearConcat)",
+                                                                        "BuildKernelCreateInfo\u003cONNX_OPERATOR_KERNEL_CLASS_NAME(kCpuExecutionProvider, kMSDomain, 1, QLinearConcat)\u003e"
+                                                                    ]
+                                                   },
+                                                   {
+                                                       "id":  "ort-cpu-qlinearconcat-implementation",
+                                                       "provider":  "CPUExecutionProvider",
+                                                       "source_file":  "onnxruntime/contrib_ops/cpu/quantization/qlinear_concat.cc",
+                                                       "source_url":  "https://github.com/microsoft/onnxruntime/blob/c57e0e50ad068905a4140d361b0b3fd8c251e540/onnxruntime/contrib_ops/cpu/quantization/qlinear_concat.cc",
+                                                       "line_hints":  [
+                                                                          68,
+                                                                          157
+                                                                      ],
+                                                       "contains":  [
+                                                                        "Status QLinearConcat::Compute(OpKernelContext* ctx) const",
+                                                                        "ONNX_OPERATOR_KERNEL_EX(QLinearConcat, kMSDomain, 1, kCpuExecutionProvider, KernelDefBuilder(), QLinearConcat);"
+                                                                    ]
+                                                   },
+                                                   {
+                                                       "id":  "ort-dml-qlinearconcat-supported-registration",
+                                                       "provider":  "DmlExecutionProvider",
+                                                       "source_file":  "onnxruntime/core/providers/dml/DmlExecutionProvider/src/Operators/OperatorRegistration.cpp",
+                                                       "source_url":  "https://github.com/microsoft/onnxruntime/blob/c57e0e50ad068905a4140d361b0b3fd8c251e540/onnxruntime/core/providers/dml/DmlExecutionProvider/src/Operators/OperatorRegistration.cpp",
+                                                       "line_hints":  [
+                                                                          515,
+                                                                          1140
+                                                                      ],
+                                                       "contains":  [
+                                                                        "DML_OP_EXTERN_CREATION_FUNCTION(QLinearConcat);",
+                                                                        "REG_INFO_MS(   1,  QLinearConcat",
+                                                                        "DmlGraphSupport::Supported"
+                                                                    ]
+                                                   }
+                                               ]
+                      }
+                  ]
+}

@@ -1,0 +1,17 @@
+﻿[package]
+name = "edgefit-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[[bin]]
+name = "edgefit"
+path = "src/main.rs"
+
+[dependencies]
+edgefit-core = { path = "../edgefit-core" }
+edgefit-diff = { path = "../edgefit-diff" }
+edgefit-ir = { path = "../edgefit-ir" }
+edgefit-report = { path = "../edgefit-report" }
+edgefit-target = { path = "../edgefit-target" }

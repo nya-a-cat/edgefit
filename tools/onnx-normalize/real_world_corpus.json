@@ -1,0 +1,776 @@
+{
+    "schema":  "edgefit.real_world_corpus.v1",
+    "models":  [
+                   {
+                       "id":  "onnx-model-zoo-mnist-8",
+                       "name":  "MNIST-Handwritten Digit Recognition",
+                       "source":  "ONNX Model Zoo legacy_models on Hugging Face",
+                       "source_page":  "https://huggingface.co/onnxmodelzoo/legacy_models/tree/main/validated/vision/classification/mnist/model",
+                       "archive_url":  "https://huggingface.co/onnxmodelzoo/legacy_models/resolve/main/validated/vision/classification/mnist/model/mnist-8.tar.gz",
+                       "archive_name":  "mnist-8.tar.gz",
+                       "archive_bytes":  26751,
+                       "archive_sha256":  "2f47e338faddbb30488abd83e8179ce44882de465165bb3a5b2640719f64f70c",
+                       "model_member":  "model/model.onnx",
+                       "model_bytes":  26454,
+                       "model_sha256":  "2f06e72de813a8635c9bc0397ac447a601bdbfa7df4bebc278723b958831c9bf",
+                       "expected_ops":  [
+                                            "Add",
+                                            "Conv",
+                                            "MatMul",
+                                            "MaxPool",
+                                            "Relu",
+                                            "Reshape"
+                                        ],
+                       "expected_outputs":  [
+                                                {
+                                                    "name":  "Plus214_Output_0",
+                                                    "dtype":  "float32",
+                                                    "shape":  [
+                                                                  1,
+                                                                  10
+                                                              ]
+                                                }
+                                            ],
+                       "last_verified":  "2026-07-09"
+                   },
+                   {
+                       "id":  "onnx-model-zoo-super-resolution-10",
+                       "name":  "Super Resolution",
+                       "source":  "ONNX Model Zoo legacy_models on Hugging Face",
+                       "source_page":  "https://huggingface.co/onnxmodelzoo/legacy_models/tree/main/validated/vision/super_resolution/sub_pixel_cnn_2016/model",
+                       "archive_url":  "https://huggingface.co/onnxmodelzoo/legacy_models/resolve/main/validated/vision/super_resolution/sub_pixel_cnn_2016/model/super-resolution-10.tar.gz",
+                       "archive_name":  "super-resolution-10.tar.gz",
+                       "archive_bytes":  2079037,
+                       "archive_sha256":  "15810206d8a5a57a6cc4caa9aa2bd712d3a144a2098b2ec31b5074714c4aeeac",
+                       "model_member":  "super_resolution/super_resolution.onnx",
+                       "model_bytes":  240078,
+                       "model_sha256":  "85f36ff88cc504a24af5e0602148bc56a8aa09a58eca8c0da2756f3e8186035e",
+                       "expected_ops":  [
+                                            "Constant",
+                                            "Conv",
+                                            "Relu",
+                                            "Reshape",
+                                            "Transpose"
+                                        ],
+                       "expected_outputs":  [
+                                                {
+                                                    "name":  "output",
+                                                    "dtype":  "float32",
+                                                    "shape":  [
+                                                                  "batch_size",
+                                                                  1,
+                                                                  672,
+                                                                  672
+                                                              ]
+                                                }
+                                            ],
+                       "last_verified":  "2026-07-09"
+                   },
+                   {
+                       "id":  "onnx-model-zoo-mobilenetv2-12-int8",
+                       "name":  "MobileNetV2 int8",
+                       "source":  "ONNX Model Zoo legacy_models on Hugging Face",
+                       "source_page":  "https://huggingface.co/onnxmodelzoo/legacy_models/tree/main/validated/vision/classification/mobilenet/model",
+                       "archive_url":  "https://huggingface.co/onnxmodelzoo/legacy_models/resolve/main/validated/vision/classification/mobilenet/model/mobilenetv2-12-int8.tar.gz",
+                       "archive_name":  "mobilenetv2-12-int8.tar.gz",
+                       "archive_bytes":  3914892,
+                       "archive_sha256":  "dfcf1dc15b78611489f22a19902de12e304bf0380e185bde499fcf70f7647455",
+                       "model_member":  "mobilenetv2-12-int8/mobilenetv2-12-int8.onnx",
+                       "model_bytes":  3655033,
+                       "model_sha256":  "cc028fe6cae7bc11a4ff53cfc9b79c920e8be65ce33a904ec3e2a8f66d77f95f",
+                       "expected_ops":  [
+                                            "Concat",
+                                            "DequantizeLinear",
+                                            "Gather",
+                                            "QLinearAdd",
+                                            "QLinearConv",
+                                            "QLinearGlobalAveragePool",
+                                            "QLinearMatMul",
+                                            "QuantizeLinear",
+                                            "Reshape",
+                                            "Shape",
+                                            "Unsqueeze"
+                                        ],
+                       "expected_outputs":  [
+                                                {
+                                                    "name":  "output",
+                                                    "dtype":  "float32",
+                                                    "shape":  [
+                                                                  "batch_size",
+                                                                  1000
+                                                              ]
+                                                }
+                                            ],
+                       "last_verified":  "2026-07-09",
+                       "expected_operator_domains":  {
+                                                         "QLinearAdd":  [
+                                                                            "com.microsoft"
+                                                                        ],
+                                                         "QLinearGlobalAveragePool":  [
+                                                                                          "com.microsoft"
+                                                                                      ]
+                                                     }
+                   },
+                   {
+                       "id":  "onnx-model-zoo-ssd-mobilenet-v1-12-int8",
+                       "name":  "SSD MobileNetV1 int8",
+                       "source":  "ONNX Model Zoo legacy_models on Hugging Face",
+                       "source_page":  "https://huggingface.co/onnxmodelzoo/legacy_models/tree/main/validated/vision/object_detection_segmentation/ssd-mobilenetv1/model",
+                       "archive_url":  "https://huggingface.co/onnxmodelzoo/legacy_models/resolve/main/validated/vision/object_detection_segmentation/ssd-mobilenetv1/model/ssd_mobilenet_v1_12-int8.tar.gz",
+                       "archive_name":  "ssd_mobilenet_v1_12-int8.tar.gz",
+                       "archive_bytes":  5804599,
+                       "archive_sha256":  "6c77eb8d85247fceb53bf5da5755023e6c84d8c961fc722cf149f86943f5aea4",
+                       "model_member":  "ssd_mobilenet_v1_12-int8/ssd_mobilenet_v1_12-int8.onnx",
+                       "model_bytes":  9540809,
+                       "model_sha256":  "2b79e6a7fb1ec6a33f332b9b10d82d9de4b7b49dcd26b5946921bb356895c954",
+                       "expected_ops":  [
+                                            "Add",
+                                            "Cast",
+                                            "Concat",
+                                            "DequantizeLinear",
+                                            "Exp",
+                                            "Expand",
+                                            "Gather",
+                                            "Less",
+                                            "Loop",
+                                            "Mul",
+                                            "QLinearConv",
+                                            "QuantizeLinear",
+                                            "Reshape",
+                                            "Shape",
+                                            "Sigmoid",
+                                            "Slice",
+                                            "Split",
+                                            "Squeeze",
+                                            "Sub",
+                                            "Tile",
+                                            "Transpose",
+                                            "Unsqueeze"
+                                        ],
+                       "expected_outputs":  [
+                                                {
+                                                    "name":  "detection_boxes",
+                                                    "dtype":  "float32",
+                                                    "shape":  [
+                                                                  "unk__862",
+                                                                  "unk__859",
+                                                                  4
+                                                              ]
+                                                },
+                                                {
+                                                    "name":  "detection_classes",
+                                                    "dtype":  "float32",
+                                                    "shape":  [
+                                                                  "unk__860",
+                                                                  "unk__852"
+                                                              ]
+                                                },
+                                                {
+                                                    "name":  "detection_scores",
+                                                    "dtype":  "float32",
+                                                    "shape":  [
+                                                                  "unk__861",
+                                                                  "unk__855"
+                                                              ]
+                                                },
+                                                {
+                                                    "name":  "num_detections",
+                                                    "dtype":  "float32",
+                                                    "shape":  [
+                                                                  "unk__863"
+                                                              ]
+                                                }
+                                            ],
+                       "last_verified":  "2026-07-09"
+                   },
+                   {
+                       "id":  "onnx-model-zoo-mnist-12-int8",
+                       "name":  "mnist-12-int8",
+                       "source":  "ONNX Model Zoo legacy_models on Hugging Face",
+                       "source_page":  "https://huggingface.co/onnxmodelzoo/legacy_models/tree/main/validated/vision/classification/mnist/model",
+                       "model_url":  "https://huggingface.co/onnxmodelzoo/legacy_models/resolve/main/validated/vision/classification/mnist/model/mnist-12-int8.onnx",
+                       "model_name":  "mnist-12-int8.onnx",
+                       "model_bytes":  10969,
+                       "model_sha256":  "5eac0752eecf4991a5e4157cf31a186f2c61090494019e87979ac17df1dae253",
+                       "expected_ops":  [
+                                            "DequantizeLinear",
+                                            "MaxPool",
+                                            "QLinearAdd",
+                                            "QLinearConv",
+                                            "QLinearMatMul",
+                                            "QuantizeLinear",
+                                            "Reshape"
+                                        ],
+                       "expected_outputs":  [
+                                                {
+                                                    "name":  "Plus214_Output_0",
+                                                    "dtype":  "float32",
+                                                    "shape":  [
+                                                                  1,
+                                                                  10
+                                                              ]
+                                                }
+                                            ],
+                       "last_verified":  "2026-07-09",
+                       "expected_operator_domains":  {
+                                                         "QLinearAdd":  [
+                                                                            "com.microsoft"
+                                                                        ]
+                                                     }
+                   },
+                   {
+                       "id":  "onnx-model-zoo-mnist-12",
+                       "name":  "mnist-12",
+                       "source":  "ONNX Model Zoo legacy_models on Hugging Face",
+                       "source_page":  "https://huggingface.co/onnxmodelzoo/legacy_models/tree/main/validated/vision/classification/mnist/model",
+                       "model_url":  "https://huggingface.co/onnxmodelzoo/legacy_models/resolve/main/validated/vision/classification/mnist/model/mnist-12.onnx",
+                       "model_name":  "mnist-12.onnx",
+                       "model_bytes":  26143,
+                       "model_sha256":  "5c688690f8bacf667d4c2074af5ad0646ca328d7ab03eccf944a65b320171bdd",
+                       "expected_ops":  [
+                                            "Add",
+                                            "Conv",
+                                            "MatMul",
+                                            "MaxPool",
+                                            "Relu",
+                                            "Reshape"
+                                        ],
+                       "expected_outputs":  [
+                                                {
+                                                    "name":  "Plus214_Output_0",
+                                                    "dtype":  "float32",
+                                                    "shape":  [
+                                                                  1,
+                                                                  10
+                                                              ]
+                                                }
+                                            ],
+                       "last_verified":  "2026-07-09"
+                   },
+                   {
+                       "id":  "onnx-model-zoo-mnist-7",
+                       "name":  "mnist-7",
+                       "source":  "ONNX Model Zoo legacy_models on Hugging Face",
+                       "source_page":  "https://huggingface.co/onnxmodelzoo/legacy_models/tree/main/validated/vision/classification/mnist/model",
+                       "model_url":  "https://huggingface.co/onnxmodelzoo/legacy_models/resolve/main/validated/vision/classification/mnist/model/mnist-7.onnx",
+                       "model_name":  "mnist-7.onnx",
+                       "model_bytes":  26454,
+                       "model_sha256":  "0d715376572e89832685c56a65ef1391f5f0b7dd31d61050c91ff3ecab16c032",
+                       "expected_ops":  [
+                                            "Add",
+                                            "Conv",
+                                            "MatMul",
+                                            "MaxPool",
+                                            "Relu",
+                                            "Reshape"
+                                        ],
+                       "expected_outputs":  [
+                                                {
+                                                    "name":  "Plus214_Output_0",
+                                                    "dtype":  "float32",
+                                                    "shape":  [
+                                                                  1,
+                                                                  10
+                                                              ]
+                                                }
+                                            ],
+                       "last_verified":  "2026-07-09"
+                   },
+                   {
+                       "id":  "onnx-model-zoo-version-rfb-320-int8",
+                       "name":  "version-RFB-320-int8",
+                       "source":  "ONNX Model Zoo legacy_models on Hugging Face",
+                       "source_page":  "https://huggingface.co/onnxmodelzoo/legacy_models/tree/main/validated/vision/body_analysis/ultraface/models",
+                       "model_url":  "https://huggingface.co/onnxmodelzoo/legacy_models/resolve/main/validated/vision/body_analysis/ultraface/models/version-RFB-320-int8.onnx",
+                       "model_name":  "version-RFB-320-int8.onnx",
+                       "model_bytes":  458144,
+                       "model_sha256":  "093a9a55ff05fd71ace744593fd0c81eab8306d6d8c38b0892c5b3cff7f08265",
+                       "expected_ops":  [
+                                            "Add",
+                                            "Concat",
+                                            "DequantizeLinear",
+                                            "Div",
+                                            "Exp",
+                                            "Mul",
+                                            "QLinearAdd",
+                                            "QLinearConcat",
+                                            "QLinearConv",
+                                            "QuantizeLinear",
+                                            "Reshape",
+                                            "Slice",
+                                            "Softmax",
+                                            "Sub",
+                                            "Transpose"
+                                        ],
+                       "expected_outputs":  [
+                                                {
+                                                    "name":  "scores",
+                                                    "dtype":  "float32",
+                                                    "shape":  [
+                                                                  1,
+                                                                  4420,
+                                                                  2
+                                                              ]
+                                                },
+                                                {
+                                                    "name":  "boxes",
+                                                    "dtype":  "float32",
+                                                    "shape":  [
+                                                                  1,
+                                                                  4420,
+                                                                  4
+                                                              ]
+                                                }
+                                            ],
+                       "last_verified":  "2026-07-09",
+                       "expected_operator_domains":  {
+                                                         "QLinearAdd":  [
+                                                                            "com.microsoft"
+                                                                        ],
+                                                         "QLinearConcat":  [
+                                                                               "com.microsoft"
+                                                                           ]
+                                                     }
+                   },
+                   {
+                       "id":  "onnx-model-zoo-version-rfb-320",
+                       "name":  "version-RFB-320",
+                       "source":  "ONNX Model Zoo legacy_models on Hugging Face",
+                       "source_page":  "https://huggingface.co/onnxmodelzoo/legacy_models/tree/main/validated/vision/body_analysis/ultraface/models",
+                       "model_url":  "https://huggingface.co/onnxmodelzoo/legacy_models/resolve/main/validated/vision/body_analysis/ultraface/models/version-RFB-320.onnx",
+                       "model_name":  "version-RFB-320.onnx",
+                       "model_bytes":  1270727,
+                       "model_sha256":  "34cd7e60aeff28744c657de7a3dc64e872d506741de66987f3426f2b79f88017",
+                       "expected_ops":  [
+                                            "Add",
+                                            "BatchNormalization",
+                                            "Concat",
+                                            "Constant",
+                                            "Conv",
+                                            "Div",
+                                            "Exp",
+                                            "Gather",
+                                            "Mul",
+                                            "Relu",
+                                            "Reshape",
+                                            "Shape",
+                                            "Slice",
+                                            "Softmax",
+                                            "Sub",
+                                            "Transpose",
+                                            "Unsqueeze"
+                                        ],
+                       "expected_outputs":  [
+                                                {
+                                                    "name":  "scores",
+                                                    "dtype":  "float32",
+                                                    "shape":  [
+                                                                  1,
+                                                                  4420,
+                                                                  2
+                                                              ]
+                                                },
+                                                {
+                                                    "name":  "boxes",
+                                                    "dtype":  "float32",
+                                                    "shape":  [
+                                                                  1,
+                                                                  4420,
+                                                                  4
+                                                              ]
+                                                }
+                                            ],
+                       "last_verified":  "2026-07-09"
+                   },
+                   {
+                       "id":  "onnx-model-zoo-squeezenet1.0-12-int8",
+                       "name":  "squeezenet1.0-12-int8",
+                       "source":  "ONNX Model Zoo legacy_models on Hugging Face",
+                       "source_page":  "https://huggingface.co/onnxmodelzoo/legacy_models/tree/main/validated/vision/classification/squeezenet/model",
+                       "model_url":  "https://huggingface.co/onnxmodelzoo/legacy_models/resolve/main/validated/vision/classification/squeezenet/model/squeezenet1.0-12-int8.onnx",
+                       "model_name":  "squeezenet1.0-12-int8.onnx",
+                       "model_bytes":  1293388,
+                       "model_sha256":  "3da17dfad1b7ba23c93fac6dbf49f6db78cd42f7519e915a2e27d37c5c0a972b",
+                       "expected_ops":  [
+                                            "Concat",
+                                            "DequantizeLinear",
+                                            "MaxPool",
+                                            "QLinearConv",
+                                            "QLinearGlobalAveragePool",
+                                            "QuantizeLinear",
+                                            "Softmax"
+                                        ],
+                       "expected_outputs":  [
+                                                {
+                                                    "name":  "softmaxout_1",
+                                                    "dtype":  "float32",
+                                                    "shape":  [
+                                                                  1,
+                                                                  1000,
+                                                                  1,
+                                                                  1
+                                                              ]
+                                                }
+                                            ],
+                       "last_verified":  "2026-07-09",
+                       "expected_operator_domains":  {
+                                                         "QLinearGlobalAveragePool":  [
+                                                                                          "com.microsoft"
+                                                                                      ]
+                                                     }
+                   },
+                   {
+                       "id":  "onnx-model-zoo-squeezenet1.0-13-qdq",
+                       "name":  "squeezenet1.0-13-qdq",
+                       "source":  "ONNX Model Zoo legacy_models on Hugging Face",
+                       "source_page":  "https://huggingface.co/onnxmodelzoo/legacy_models/tree/main/validated/vision/classification/squeezenet/model",
+                       "model_url":  "https://huggingface.co/onnxmodelzoo/legacy_models/resolve/main/validated/vision/classification/squeezenet/model/squeezenet1.0-13-qdq.onnx",
+                       "model_name":  "squeezenet1.0-13-qdq.onnx",
+                       "model_bytes":  1345213,
+                       "model_sha256":  "4a567dd7542ef440890d57268fabf47211174c593d7a1837bd7f16a1067169e7",
+                       "expected_ops":  [
+                                            "Concat",
+                                            "Conv",
+                                            "DequantizeLinear",
+                                            "Flatten",
+                                            "GlobalAveragePool",
+                                            "MaxPool",
+                                            "QuantizeLinear",
+                                            "Reshape",
+                                            "Softmax"
+                                        ],
+                       "expected_outputs":  [
+                                                {
+                                                    "name":  "softmaxout_1",
+                                                    "dtype":  "float32",
+                                                    "shape":  [
+                                                                  1,
+                                                                  1000,
+                                                                  1,
+                                                                  1
+                                                              ]
+                                                }
+                                            ],
+                       "last_verified":  "2026-07-09"
+                   },
+                   {
+                       "id":  "onnx-model-zoo-version-rfb-640",
+                       "name":  "version-RFB-640",
+                       "source":  "ONNX Model Zoo legacy_models on Hugging Face",
+                       "source_page":  "https://huggingface.co/onnxmodelzoo/legacy_models/tree/main/validated/vision/body_analysis/ultraface/models",
+                       "model_url":  "https://huggingface.co/onnxmodelzoo/legacy_models/resolve/main/validated/vision/body_analysis/ultraface/models/version-RFB-640.onnx",
+                       "model_name":  "version-RFB-640.onnx",
+                       "model_bytes":  1588012,
+                       "model_sha256":  "8f4c659275977e7a3bfbfa339a9c769ad793df50f9c0baa8c14b11baa1646430",
+                       "expected_ops":  [
+                                            "Add",
+                                            "BatchNormalization",
+                                            "Concat",
+                                            "Constant",
+                                            "Conv",
+                                            "Div",
+                                            "Exp",
+                                            "Gather",
+                                            "Mul",
+                                            "Relu",
+                                            "Reshape",
+                                            "Shape",
+                                            "Slice",
+                                            "Softmax",
+                                            "Sub",
+                                            "Transpose",
+                                            "Unsqueeze"
+                                        ],
+                       "expected_outputs":  [
+                                                {
+                                                    "name":  "scores",
+                                                    "dtype":  "float32",
+                                                    "shape":  [
+                                                                  1,
+                                                                  17640,
+                                                                  2
+                                                              ]
+                                                },
+                                                {
+                                                    "name":  "boxes",
+                                                    "dtype":  "float32",
+                                                    "shape":  [
+                                                                  1,
+                                                                  17640,
+                                                                  4
+                                                              ]
+                                                }
+                                            ],
+                       "last_verified":  "2026-07-09"
+                   },
+                   {
+                       "id":  "onnx-model-zoo-shufflenet-v2-12-int8",
+                       "name":  "shufflenet-v2-12-int8",
+                       "source":  "ONNX Model Zoo legacy_models on Hugging Face",
+                       "source_page":  "https://huggingface.co/onnxmodelzoo/legacy_models/tree/main/validated/vision/classification/shufflenet/model",
+                       "model_url":  "https://huggingface.co/onnxmodelzoo/legacy_models/resolve/main/validated/vision/classification/shufflenet/model/shufflenet-v2-12-int8.onnx",
+                       "model_name":  "shufflenet-v2-12-int8.onnx",
+                       "model_bytes":  2388912,
+                       "model_sha256":  "bf5eefde67941aa7eaa7787316c9c52c4b04e07fc9587a6ea7028883be9a8d4e",
+                       "expected_ops":  [
+                                            "Concat",
+                                            "DequantizeLinear",
+                                            "MaxPool",
+                                            "QLinearAdd",
+                                            "QLinearConv",
+                                            "QLinearMatMul",
+                                            "QuantizeLinear",
+                                            "ReduceMean",
+                                            "Reshape",
+                                            "Split",
+                                            "Transpose"
+                                        ],
+                       "expected_outputs":  [
+                                                {
+                                                    "name":  "output",
+                                                    "dtype":  "float32",
+                                                    "shape":  [
+                                                                  1,
+                                                                  1000
+                                                              ]
+                                                }
+                                            ],
+                       "last_verified":  "2026-07-09",
+                       "expected_operator_domains":  {
+                                                         "QLinearAdd":  [
+                                                                            "com.microsoft"
+                                                                        ]
+                                                     }
+                   },
+                   {
+                       "id":  "onnx-model-zoo-shufflenet-v2-12-qdq",
+                       "name":  "shufflenet-v2-12-qdq",
+                       "source":  "ONNX Model Zoo legacy_models on Hugging Face",
+                       "source_page":  "https://huggingface.co/onnxmodelzoo/legacy_models/tree/main/validated/vision/classification/shufflenet/model",
+                       "model_url":  "https://huggingface.co/onnxmodelzoo/legacy_models/resolve/main/validated/vision/classification/shufflenet/model/shufflenet-v2-12-qdq.onnx",
+                       "model_name":  "shufflenet-v2-12-qdq.onnx",
+                       "model_bytes":  2415805,
+                       "model_sha256":  "7c536d02e2f6af9569e5f3c7a4d8282060072119524c93c8da71e63876b4722b",
+                       "expected_ops":  [
+                                            "Add",
+                                            "Concat",
+                                            "Conv",
+                                            "DequantizeLinear",
+                                            "MatMul",
+                                            "MaxPool",
+                                            "QuantizeLinear",
+                                            "ReduceMean",
+                                            "Reshape",
+                                            "Split",
+                                            "Transpose"
+                                        ],
+                       "expected_outputs":  [
+                                                {
+                                                    "name":  "output",
+                                                    "dtype":  "float32",
+                                                    "shape":  [
+                                                                  1,
+                                                                  1000
+                                                              ]
+                                                }
+                                            ],
+                       "last_verified":  "2026-07-09"
+                   },
+                   {
+                       "id":  "onnx-model-zoo-mobilenetv2-12-qdq",
+                       "name":  "mobilenetv2-12-qdq",
+                       "source":  "ONNX Model Zoo legacy_models on Hugging Face",
+                       "source_page":  "https://huggingface.co/onnxmodelzoo/legacy_models/tree/main/validated/vision/classification/mobilenet/model",
+                       "model_url":  "https://huggingface.co/onnxmodelzoo/legacy_models/resolve/main/validated/vision/classification/mobilenet/model/mobilenetv2-12-qdq.onnx",
+                       "model_name":  "mobilenetv2-12-qdq.onnx",
+                       "model_bytes":  3593903,
+                       "model_sha256":  "41a36090dafe98f4ad8f9b7fe0b218c56ac3c031e547f0367c30655d2702bffe",
+                       "expected_ops":  [
+                                            "Add",
+                                            "Concat",
+                                            "Conv",
+                                            "DequantizeLinear",
+                                            "Gather",
+                                            "GlobalAveragePool",
+                                            "MatMul",
+                                            "QuantizeLinear",
+                                            "Reshape",
+                                            "Shape",
+                                            "Unsqueeze"
+                                        ],
+                       "expected_outputs":  [
+                                                {
+                                                    "name":  "output",
+                                                    "dtype":  "float32",
+                                                    "shape":  [
+                                                                  "batch_size",
+                                                                  1000
+                                                              ]
+                                                }
+                                            ],
+                       "last_verified":  "2026-07-09"
+                   },
+                   {
+                       "id":  "onnx-model-zoo-squeezenet1.0-7",
+                       "name":  "squeezenet1.0-7",
+                       "source":  "ONNX Model Zoo legacy_models on Hugging Face",
+                       "source_page":  "https://huggingface.co/onnxmodelzoo/legacy_models/tree/main/validated/vision/classification/squeezenet/model",
+                       "model_url":  "https://huggingface.co/onnxmodelzoo/legacy_models/resolve/main/validated/vision/classification/squeezenet/model/squeezenet1.0-7.onnx",
+                       "model_name":  "squeezenet1.0-7.onnx",
+                       "model_bytes":  4952222,
+                       "model_sha256":  "d95e2191e056f1912a9b8f6000da3b9c7818441b9eb48137033c2adbf6398bc8",
+                       "expected_ops":  [
+                                            "Concat",
+                                            "Conv",
+                                            "Dropout",
+                                            "GlobalAveragePool",
+                                            "MaxPool",
+                                            "Relu",
+                                            "Softmax"
+                                        ],
+                       "expected_outputs":  [
+                                                {
+                                                    "name":  "softmaxout_1",
+                                                    "dtype":  "float32",
+                                                    "shape":  [
+                                                                  1,
+                                                                  1000,
+                                                                  1,
+                                                                  1
+                                                              ]
+                                                }
+                                            ],
+                       "last_verified":  "2026-07-09"
+                   },
+                   {
+                       "id":  "onnx-model-zoo-squeezenet1.0-12",
+                       "name":  "squeezenet1.0-12",
+                       "source":  "ONNX Model Zoo legacy_models on Hugging Face",
+                       "source_page":  "https://huggingface.co/onnxmodelzoo/legacy_models/tree/main/validated/vision/classification/squeezenet/model",
+                       "model_url":  "https://huggingface.co/onnxmodelzoo/legacy_models/resolve/main/validated/vision/classification/squeezenet/model/squeezenet1.0-12.onnx",
+                       "model_name":  "squeezenet1.0-12.onnx",
+                       "model_bytes":  4952956,
+                       "model_sha256":  "dec81a8684617770b3cf13fadc1d92565d1d453d23935fc6388b792d99c992bd",
+                       "expected_ops":  [
+                                            "Concat",
+                                            "Conv",
+                                            "Dropout",
+                                            "GlobalAveragePool",
+                                            "MaxPool",
+                                            "Relu",
+                                            "Softmax"
+                                        ],
+                       "expected_outputs":  [
+                                                {
+                                                    "name":  "softmaxout_1",
+                                                    "dtype":  "float32",
+                                                    "shape":  [
+                                                                  1,
+                                                                  1000,
+                                                                  1,
+                                                                  1
+                                                              ]
+                                                }
+                                            ],
+                       "last_verified":  "2026-07-09"
+                   },
+                   {
+                       "id":  "onnx-model-zoo-squeezenet1.1-7",
+                       "name":  "squeezenet1.1-7",
+                       "source":  "ONNX Model Zoo legacy_models on Hugging Face",
+                       "source_page":  "https://huggingface.co/onnxmodelzoo/legacy_models/tree/main/validated/vision/classification/squeezenet/model",
+                       "model_url":  "https://huggingface.co/onnxmodelzoo/legacy_models/resolve/main/validated/vision/classification/squeezenet/model/squeezenet1.1-7.onnx",
+                       "model_name":  "squeezenet1.1-7.onnx",
+                       "model_bytes":  4956208,
+                       "model_sha256":  "1eeff551a67ae8d565ca33b572fc4b66e3ef357b0eb2863bb9ff47a918cc4088",
+                       "expected_ops":  [
+                                            "AveragePool",
+                                            "Concat",
+                                            "Conv",
+                                            "Dropout",
+                                            "MaxPool",
+                                            "Relu",
+                                            "Reshape"
+                                        ],
+                       "expected_outputs":  [
+                                                {
+                                                    "name":  "squeezenet0_flatten0_reshape0",
+                                                    "dtype":  "float32",
+                                                    "shape":  [
+                                                                  1,
+                                                                  1000
+                                                              ]
+                                                }
+                                            ],
+                       "last_verified":  "2026-07-09"
+                   },
+                   {
+                       "id":  "onnx-model-zoo-shufflenet-7",
+                       "name":  "shufflenet-7",
+                       "source":  "ONNX Model Zoo legacy_models on Hugging Face",
+                       "source_page":  "https://huggingface.co/onnxmodelzoo/legacy_models/tree/main/validated/vision/classification/shufflenet/model",
+                       "model_url":  "https://huggingface.co/onnxmodelzoo/legacy_models/resolve/main/validated/vision/classification/shufflenet/model/shufflenet-7.onnx",
+                       "model_name":  "shufflenet-7.onnx",
+                       "model_bytes":  5723770,
+                       "model_sha256":  "359609ab27d27d44091e05f9a5127d9ce0c155ed69d0716f41e6779998bc4764",
+                       "expected_ops":  [
+                                            "AveragePool",
+                                            "BatchNormalization",
+                                            "Concat",
+                                            "Conv",
+                                            "Gemm",
+                                            "MaxPool",
+                                            "Relu",
+                                            "Reshape",
+                                            "Softmax",
+                                            "Sum",
+                                            "Transpose"
+                                        ],
+                       "expected_outputs":  [
+                                                {
+                                                    "name":  "gpu_0/softmax_1",
+                                                    "dtype":  "float32",
+                                                    "shape":  [
+                                                                  1,
+                                                                  1000
+                                                              ]
+                                                }
+                                            ],
+                       "last_verified":  "2026-07-09"
+                   },
+                   {
+                       "id":  "onnx-model-zoo-shufflenet-8",
+                       "name":  "shufflenet-8",
+                       "source":  "ONNX Model Zoo legacy_models on Hugging Face",
+                       "source_page":  "https://huggingface.co/onnxmodelzoo/legacy_models/tree/main/validated/vision/classification/shufflenet/model",
+                       "model_url":  "https://huggingface.co/onnxmodelzoo/legacy_models/resolve/main/validated/vision/classification/shufflenet/model/shufflenet-8.onnx",
+                       "model_name":  "shufflenet-8.onnx",
+                       "model_bytes":  5723770,
+                       "model_sha256":  "faabc409fd57ae83ddebe7fb981ee492a7899c1acb4893cc8e64c11f0ccdaa98",
+                       "expected_ops":  [
+                                            "AveragePool",
+                                            "BatchNormalization",
+                                            "Concat",
+                                            "Conv",
+                                            "Gemm",
+                                            "MaxPool",
+                                            "Relu",
+                                            "Reshape",
+                                            "Softmax",
+                                            "Sum",
+                                            "Transpose"
+                                        ],
+                       "expected_outputs":  [
+                                                {
+                                                    "name":  "gpu_0/softmax_1",
+                                                    "dtype":  "float32",
+                                                    "shape":  [
+                                                                  1,
+                                                                  1000
+                                                              ]
+                                                }
+                                            ],
+                       "last_verified":  "2026-07-09"
+                   }
+               ]
+}
