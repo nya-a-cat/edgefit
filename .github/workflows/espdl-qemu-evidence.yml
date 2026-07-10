@@ -1,0 +1,45 @@
+name: ESP-DL QEMU evidence
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  esp32s3-qemu:
+    name: ESP32-S3 simulated deployment
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    container:
+      image: espressif/idf:v5.5.4
+      options: --user root
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install official QEMU runtime
+        shell: bash
+        run: |
+          apt-get update
+          DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            ca-certificates curl libgcrypt20 libglib2.0-0 libpixman-1-0 libsdl2-2.0-0 libslirp0
+          python "$IDF_PATH/tools/idf_tools.py" install qemu-xtensa
+      - name: Build firmware and run simulated model test
+        shell: bash
+        run: |
+          . "$IDF_PATH/export.sh"
+          tools/espdl-qemu/run_evidence.sh
+      - name: Publish simulation summary
+        if: ${{ always() && hashFiles('tmp/espdl-qemu/evidence.md') != '' }}
+        shell: bash
+        run: cat tmp/espdl-qemu/evidence.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload simulation evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: espdl-esp32s3-qemu-evidence
+          path: |
+            tmp/espdl-qemu/evidence.json
+            tmp/espdl-qemu/evidence.md
+            tmp/espdl-qemu/qemu.log
+          if-no-files-found: warn
+          retention-days: 14
