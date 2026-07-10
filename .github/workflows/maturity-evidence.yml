@@ -1,0 +1,91 @@
+name: Maturity evidence
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  planner-scale:
+    name: Planner scale evidence
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+      - name: Build release CLI
+        run: cargo build --workspace --release --locked
+      - name: Run 1K, 10K and 100K node evidence
+        run: |
+          python tools/competitive-benchmark/benchmark.py \
+            --manifest tools/competitive-benchmark/planner_scale_manifest.json \
+            --edgefit target/release/edgefit \
+            --tools edgefit \
+            --edgefit-repetitions 5 \
+            --measure-peak-rss \
+            --out-dir tmp/performance-evidence
+      - name: Publish planner summary
+        run: cat tmp/performance-evidence/competitive-benchmark.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload planner evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: planner-scale-evidence
+          path: |
+            tmp/performance-evidence/competitive-benchmark.json
+            tmp/performance-evidence/competitive-benchmark.md
+            tmp/performance-evidence/artifacts/
+          if-no-files-found: error
+
+  competitive-matrix:
+    name: Ten-model competitive matrix
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: tools/competitive-benchmark/requirements.txt
+      - name: Install pinned benchmark dependencies
+        run: python -m pip install -r tools/competitive-benchmark/requirements.txt
+      - name: Build release CLI
+        run: cargo build --workspace --release --locked
+      - name: Download and verify the fixed benchmark corpus
+        run: |
+          python tools/onnx-normalize/real_world_corpus.py \
+            --download \
+            --cache tmp/real_world_corpus \
+            --model-id onnx-model-zoo-mnist-8 \
+            --model-id onnx-model-zoo-mnist-12-int8 \
+            --model-id onnx-model-zoo-super-resolution-10 \
+            --model-id onnx-model-zoo-mobilenetv2-12-int8 \
+            --model-id onnx-model-zoo-mobilenetv2-12-qdq \
+            --model-id onnx-model-zoo-ssd-mobilenet-v1-12-int8 \
+            --model-id onnx-model-zoo-squeezenet1.0-12 \
+            --model-id onnx-model-zoo-squeezenet1.0-12-int8 \
+            --model-id onnx-model-zoo-squeezenet1.0-13-qdq \
+            --model-id onnx-model-zoo-version-rfb-320 \
+            --out tmp/competitive-evidence/corpus-verification.json
+      - name: Run the complete three-tool matrix
+        run: |
+          python tools/competitive-benchmark/benchmark.py \
+            --manifest tools/competitive-benchmark/benchmark_manifest.json \
+            --corpus-cache tmp/real_world_corpus \
+            --edgefit target/release/edgefit \
+            --python python \
+            --edgefit-repetitions 3 \
+            --out-dir tmp/competitive-evidence
+      - name: Publish competitive summary
+        run: cat tmp/competitive-evidence/competitive-benchmark.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload competitive evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: competitive-matrix-evidence
+          path: tmp/competitive-evidence/
+          if-no-files-found: error

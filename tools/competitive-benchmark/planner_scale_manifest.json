@@ -1,0 +1,59 @@
+{
+  "schema": "edgefit.competitive_benchmark_manifest.v1",
+  "corpus_manifest": "../onnx-normalize/real_world_corpus.json",
+  "corpus_cache": "../../tmp/real_world_corpus",
+  "default_target": "../../targets/ort-mobile-cpu.yaml",
+  "cases": [
+    {
+      "id": "planner-linear-1000",
+      "purpose": "End-to-end parser, analyzer, planner, policy and report baseline at 1K nodes",
+      "tags": ["performance", "synthetic", "linear-chain", "1k"],
+      "generated_model": {
+        "kind": "linear_relu_chain",
+        "node_count": 1000,
+        "tensor_elements": 1024,
+        "dtype": "float32"
+      },
+      "expectations": {
+        "max_edgefit_duration_ms": 10000,
+        "max_edgefit_peak_rss_bytes": 536870912,
+        "expected_edgefit_node_count": 1000,
+        "require_deterministic_artifact": true
+      }
+    },
+    {
+      "id": "planner-linear-10000",
+      "purpose": "Required pull-request performance smoke at 10K nodes",
+      "tags": ["performance", "synthetic", "linear-chain", "10k", "pr-smoke"],
+      "generated_model": {
+        "kind": "linear_relu_chain",
+        "node_count": 10000,
+        "tensor_elements": 1024,
+        "dtype": "float32"
+      },
+      "expectations": {
+        "max_edgefit_duration_ms": 10000,
+        "max_edgefit_peak_rss_bytes": 536870912,
+        "expected_edgefit_node_count": 10000,
+        "require_deterministic_artifact": true
+      }
+    },
+    {
+      "id": "planner-linear-100000",
+      "purpose": "Alpha scale evidence at 100K nodes",
+      "tags": ["performance", "synthetic", "linear-chain", "100k", "alpha"],
+      "generated_model": {
+        "kind": "linear_relu_chain",
+        "node_count": 100000,
+        "tensor_elements": 1024,
+        "dtype": "float32"
+      },
+      "expectations": {
+        "max_edgefit_duration_ms": 60000,
+        "max_edgefit_peak_rss_bytes": 1073741824,
+        "expected_edgefit_node_count": 100000,
+        "require_deterministic_artifact": true
+      }
+    }
+  ]
+}

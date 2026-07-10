@@ -1,0 +1,2 @@
+-r ../onnx-normalize/requirements-runtime.txt
+onnx-tool==1.0.1
