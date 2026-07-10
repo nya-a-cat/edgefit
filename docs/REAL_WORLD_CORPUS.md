@@ -116,6 +116,12 @@ exact-match result, and maximum absolute difference. It proves that this
 metadata-only repair preserves the result for the recorded input; it is not a
 dataset-level accuracy or real-device test.
 
+[Hosted run 29095301929](https://github.com/nya-a-cat/edgefit/actions/runs/29095301929)
+passed this gate with ONNX Runtime 1.22.0 on `CPUExecutionProvider`. The recorded
+non-zero input was `data_0 float32 [1, 3, 224, 224]`; the original and repaired
+models both produced `softmaxout_1 float32 [1, 1000, 1, 1]` with
+`exact_match = true` and `max_abs_diff = 0.0`.
+
 ## Profile Matrix Consumer
 
 `tools/onnx-normalize/profile_matrix.py` consumes this corpus cache and runs each
