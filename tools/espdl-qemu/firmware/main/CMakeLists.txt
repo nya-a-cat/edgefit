@@ -13,7 +13,7 @@ include(${cmake_dir}/utilities.cmake)
 
 idf_component_register(
     SRCS "app_main.cpp"
-    REQUIRES esp-dl
+    REQUIRES esp-dl esp_psram
 )
 
 target_add_aligned_binary_data(
