@@ -62,8 +62,10 @@ INT8 候选不是因为内存超预算或算子不受支持而失败。自定义
 
 修复只增加 47 字节的 value_info，不改变 initializer、节点、arena 或预算。
 原始和修复报告会作为 Artifact 上传，修复后的 ONNX 二进制不会上传。这证明
-pass 来自证据补全，而不是放宽 target、扩大预算或 suppression。它仍不证明
-模型精度或设备运行时正确性，后两项需要独立的 runtime/hardware 验证。
+pass 来自证据补全，而不是放宽 target、扩大预算或 suppression。Alpha 工作流
+还会在同一 `CPUExecutionProvider` 上给原始和修复模型输入确定性的非零张量，
+并要求输出接口、dtype、shape 与全部元素完全相等。该单输入等价性检查仍不能
+替代数据集精度评估或设备 runtime/hardware 验证。
 
 ## 为什么不直接比较“谁通过了更多模型”
 

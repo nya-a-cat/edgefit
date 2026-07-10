@@ -97,6 +97,25 @@ unknown dtype and unresolved activation, raised memory confidence from medium
 to high, and changed EdgeFit from fail to pass without suppressions. Evidence:
 <https://github.com/nya-a-cat/edgefit/actions/runs/29094249434>.
 
+The Alpha workflow also compares the original and repaired models through the
+existing runtime smoke CLI:
+
+```bash
+python tools/onnx-normalize/runtime_smoke.py \
+  --reference-model tmp/real_world_corpus/squeezenet1.0-12-int8.onnx \
+  --candidate-model tmp/real_world_corpus/squeezenet1.0-12-int8-value-info.onnx \
+  --provider CPUExecutionProvider \
+  --out tmp/alpha-case/runtime-equivalence.json
+```
+
+This comparison requires identical runtime input/output signatures, rejects
+dynamic input dimensions, feeds both models the same deterministic non-zero
+input, and requires every output element to match exactly. The evidence records
+the model and input hashes, ONNX Runtime version, provider, output dtype/shape,
+exact-match result, and maximum absolute difference. It proves that this
+metadata-only repair preserves the result for the recorded input; it is not a
+dataset-level accuracy or real-device test.
+
 ## Profile Matrix Consumer
 
 `tools/onnx-normalize/profile_matrix.py` consumes this corpus cache and runs each
