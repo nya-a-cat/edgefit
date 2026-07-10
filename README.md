@@ -97,8 +97,11 @@ and onnx-tool. It reuses ten SHA-256-pinned models from the existing real-world
 corpus, records tool versions, duration, raw evidence and stable extracted
 metrics, including the logical activation peak and planned arena high-water
 mark, and deliberately keeps unlike memory metrics separate. The benchmark
-source has not been run. See `docs/COMPETITIVE_BENCHMARK.md` for the metric
-boundaries and planned command.
+full three-tool suite has not been run. A hosted Alpha case has compared pinned
+SqueezeNet FP32 and INT8 models: INT8 reduced file bytes by 73.89% and the
+planned activation arena by 44.08%, but EdgeFit still blocked deployment because
+one quantized activation had unprovable dtype and size metadata. See
+`docs/COMPETITIVE_BENCHMARK.md` for the evidence and metric boundaries.
 
 ## Workspace Layout
 
