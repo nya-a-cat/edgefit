@@ -196,6 +196,7 @@ dependency. See [Architecture](docs/ARCHITECTURE.md) and
 - [Target profiles](docs/TARGET_PROFILES.md)
 - [Real-world ONNX corpus](docs/REAL_WORLD_CORPUS.md)
 - [Competitive benchmark](docs/COMPETITIVE_BENCHMARK.md)
+- [ESP-DL / ESP32-S3 simulated deployment](docs/SIMULATED_DEPLOYMENT.md)
 - [Publishing policy](docs/PUBLISHING.md)
 
 ## License
