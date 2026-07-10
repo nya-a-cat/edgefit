@@ -20,6 +20,12 @@ def main() -> int:
     parser.add_argument("--manifest", default=str(DEFAULT_MANIFEST))
     parser.add_argument("--cache", default=str(DEFAULT_CACHE))
     parser.add_argument("--download", action="store_true", help="Download missing archives or model files from manifest URLs.")
+    parser.add_argument(
+        "--model-id",
+        action="append",
+        default=[],
+        help="Only verify this model ID; repeat the option to select multiple models.",
+    )
     parser.add_argument("--out", help="Write JSON summary to this path.")
     args = parser.parse_args()
 
@@ -29,7 +35,7 @@ def main() -> int:
 
     normalize = load_normalize()
     results = []
-    for item in manifest["models"]:
+    for item in select_models(manifest["models"], args.model_id):
         results.append(verify_model(item, cache, args.download, normalize))
 
     summary = {"schema": "edgefit.real_world_corpus.result.v1", "results": results}
@@ -41,6 +47,20 @@ def main() -> int:
     else:
         print(text, end="")
     return 0
+
+
+def select_models(models: list[dict[str, Any]], requested_ids: list[str]) -> list[dict[str, Any]]:
+    """按清单顺序筛选模型，并拒绝未知或重复 ID。"""
+    if not requested_ids:
+        return models
+    if len(requested_ids) != len(set(requested_ids)):
+        raise SystemExit("duplicate --model-id values are not allowed")
+    requested = set(requested_ids)
+    available = {str(item.get("id")) for item in models}
+    unknown = sorted(requested - available)
+    if unknown:
+        raise SystemExit(f"unknown model IDs: {', '.join(unknown)}")
+    return [item for item in models if item.get("id") in requested]
 
 
 def load_normalize():

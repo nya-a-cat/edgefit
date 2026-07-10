@@ -1,0 +1,28 @@
+{
+  "schema": "edgefit.competitive_benchmark_manifest.v1",
+  "corpus_manifest": "../onnx-normalize/real_world_corpus.json",
+  "corpus_cache": "../../tmp/real_world_corpus",
+  "default_target": "../../targets/ort-mobile-cpu.yaml",
+  "cases": [
+    {
+      "id": "squeezenet-fp32-baseline",
+      "model_id": "onnx-model-zoo-squeezenet1.0-12",
+      "purpose": "Real ONNX Model Zoo FP32 deployment baseline",
+      "tags": ["alpha", "fp32", "baseline", "vision"]
+    },
+    {
+      "id": "squeezenet-int8-candidate",
+      "model_id": "onnx-model-zoo-squeezenet1.0-12-int8",
+      "purpose": "Quantized model-family candidate for deployment-budget comparison",
+      "tags": ["alpha", "int8", "qoperator", "candidate", "vision"]
+    }
+  ],
+  "comparisons": [
+    {
+      "id": "squeezenet-int8-vs-fp32",
+      "baseline_case": "squeezenet-fp32-baseline",
+      "candidate_case": "squeezenet-int8-candidate",
+      "hypothesis": "INT8 reduces file and initializer bytes; activation-arena impact must be measured instead of assumed."
+    }
+  ]
+}

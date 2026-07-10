@@ -10,6 +10,12 @@
 
 源码入口为 `tools/competitive-benchmark/benchmark.py`，案例清单为 `tools/competitive-benchmark/benchmark_manifest.json`。当前只完成源码，尚未运行基准。
 
+Prototype → Alpha 的第一条聚焦证据使用同一 CLI 和
+`tools/competitive-benchmark/alpha_case_manifest.json`，对比 ONNX Model Zoo
+SqueezeNet 1.0 的 FP32 与 INT8 QOperator 文件。工作流只下载清单中这两个
+SHA-256 固定模型，并重复运行 EdgeFit 7 次，以同一托管 runner 上的端到端
+进程耗时中位数降低偶发启动噪声。
+
 ## 为什么不直接比较“谁通过了更多模型”
 
 三个工具回答的问题不同：
@@ -54,6 +60,11 @@ uv run python tools/competitive-benchmark/benchmark.py \
 
 Windows 二进制路径应改为 `tmp/cargo-target/debug/edgefit.exe`。
 
+聚焦 Alpha 案例由 `.github/workflows/alpha-evidence.yml` 手动触发。它输出
+两个完整 EdgeFit JSON 报告以及一张 before/after 表，覆盖模型文件、权重、
+逻辑 activation 峰值、计划 arena 高水位、峰值节点和进程耗时。模型二进制
+只在 runner 临时目录使用，不上传为公开 Artifact。
+
 ## 输出
 
 ```text
@@ -89,7 +100,7 @@ tmp/competitive_benchmark/
 - 基准前置 SHA-256 校验为 `O(C × S)`。
 - 编排成本为 `O(C × (E + O + T))`，三个工具按固定顺序串行执行，避免并发争抢 CPU 和内存影响结果。
 - 证据磁盘占用为模型外的 `O(C × 工具输出大小)`；模型本身复用既有 corpus cache。
-- 当前计时是一次独立进程的端到端 wall time，包括 Python 启动和模型读取，不是微基准。
+- 默认计时是一次独立进程的端到端 wall time；Alpha 案例固定报告 7 次运行的中位数。两者都包括 Python 启动和模型读取，不是微基准，更不是设备推理延迟。
 - 第一阶段不跨平台采集子进程峰值 RSS，因为 Python 标准库缺少一致的 Windows/Linux 实现；不能把缺失值伪装成零。
 
 EdgeFit 的 activation planner 使用增量 live-byte 计数和按 offset/size
