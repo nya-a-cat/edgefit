@@ -13,6 +13,10 @@ from typing import Any
 ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_MANIFEST = Path(__file__).with_name("real_world_corpus.json")
 DEFAULT_CACHE = ROOT / "tmp" / "real_world_corpus"
+QLINEAR_GLOBAL_AVERAGE_POOL_SCHEMA_SOURCE = (
+    "https://github.com/microsoft/onnxruntime/blob/v1.22.0/"
+    "onnxruntime/core/graph/contrib_ops/nhwc_schema_defs.cc"
+)
 
 
 def main() -> int:
@@ -26,6 +30,15 @@ def main() -> int:
         default=[],
         help="Only verify this model ID; repeat the option to select multiple models.",
     )
+    parser.add_argument(
+        "--repair-qlinear-global-average-pool",
+        metavar="TENSOR",
+        help="Add missing value_info for one QLinearGlobalAveragePool output.",
+    )
+    parser.add_argument(
+        "--repair-out",
+        help="Write the repaired ONNX model to this new path.",
+    )
     parser.add_argument("--out", help="Write JSON summary to this path.")
     args = parser.parse_args()
 
@@ -33,12 +46,37 @@ def main() -> int:
     cache = Path(args.cache)
     cache.mkdir(parents=True, exist_ok=True)
 
+    selected_models = select_models(manifest["models"], args.model_id)
+    validate_repair_arguments(args, selected_models)
     normalize = load_normalize()
     results = []
-    for item in select_models(manifest["models"], args.model_id):
+    for item in selected_models:
         results.append(verify_model(item, cache, args.download, normalize))
 
     summary = {"schema": "edgefit.real_world_corpus.result.v1", "results": results}
+    if args.repair_qlinear_global_average_pool:
+        source_path = prepare_model_file(selected_models[0], cache, False)
+        repaired_path = Path(args.repair_out)
+        repair = repair_qlinear_global_average_pool_value_info(
+            source_path,
+            repaired_path,
+            args.repair_qlinear_global_average_pool,
+        )
+        normalized = normalize(repaired_path)
+        repaired_value = next(
+            (
+                item
+                for item in normalized["graph"]["values"]
+                if item["name"] == args.repair_qlinear_global_average_pool
+            ),
+            None,
+        )
+        if repaired_value is None:
+            raise SystemExit("repaired value_info is missing after normalization")
+        if repaired_value["dtype"] != repair["dtype"] or repaired_value["shape"] != repair["shape"]:
+            raise SystemExit(f"repaired value_info changed during normalization: {repaired_value}")
+        repair["normalized_value_info"] = repaired_value
+        summary["repair"] = repair
     text = json.dumps(summary, ensure_ascii=False, indent=2) + "\n"
     if args.out:
         out = Path(args.out)
@@ -61,6 +99,137 @@ def select_models(models: list[dict[str, Any]], requested_ids: list[str]) -> lis
     if unknown:
         raise SystemExit(f"unknown model IDs: {', '.join(unknown)}")
     return [item for item in models if item.get("id") in requested]
+
+
+def validate_repair_arguments(args: argparse.Namespace, models: list[dict[str, Any]]) -> None:
+    """修复必须显式指定单个模型和新输出路径，避免覆盖语料事实源。"""
+    requested = bool(args.repair_qlinear_global_average_pool)
+    if requested != bool(args.repair_out):
+        raise SystemExit("repair requires both --repair-qlinear-global-average-pool and --repair-out")
+    if requested and len(models) != 1:
+        raise SystemExit("repair requires exactly one selected --model-id")
+
+
+def repair_qlinear_global_average_pool_value_info(
+    source_path: Path,
+    output_path: Path,
+    tensor_name: str,
+) -> dict[str, Any]:
+    """依据 ORT v1.22.0 schema 和模型内证据补一个缺失的中间张量声明。"""
+    import onnx
+    from onnx import TensorProto, helper
+
+    source_path = source_path.resolve()
+    output_path = output_path.resolve()
+    if source_path == output_path:
+        raise SystemExit("repair output must not overwrite the source model")
+    model = onnx.load(source_path)
+    producers = [node for node in model.graph.node if tensor_name in node.output]
+    if len(producers) != 1:
+        raise SystemExit(f"expected one producer for {tensor_name}, found {len(producers)}")
+    producer = producers[0]
+    if producer.domain != "com.microsoft" or producer.op_type != "QLinearGlobalAveragePool":
+        raise SystemExit(
+            f"{tensor_name} producer must be com.microsoft::QLinearGlobalAveragePool"
+        )
+    if len(producer.input) < 5:
+        raise SystemExit("QLinearGlobalAveragePool must expose input and output quantization facts")
+
+    inferred = onnx.shape_inference.infer_shapes(model)
+    input_dtype, input_shape = concrete_tensor_metadata(inferred, producer.input[0])
+    if input_dtype not in (TensorProto.INT8, TensorProto.UINT8):
+        raise SystemExit("QLinearGlobalAveragePool input must be int8 or uint8")
+    output_zero_point_dtype, _ = concrete_tensor_metadata(inferred, producer.input[4])
+    if output_zero_point_dtype != input_dtype:
+        raise SystemExit("output zero point dtype does not match the pooling input dtype")
+
+    channels_last = next(
+        (int(attribute.i) for attribute in producer.attribute if attribute.name == "channels_last"),
+        0,
+    )
+    if channels_last not in (0, 1):
+        raise SystemExit("channels_last must be 0 or 1")
+    output_shape = qlinear_global_average_pool_shape(input_shape, channels_last)
+    consumers = [
+        f"{node.domain or 'ai.onnx'}::{node.op_type}"
+        for node in model.graph.node
+        if tensor_name in node.input
+    ]
+    if not consumers:
+        raise SystemExit(f"{tensor_name} has no consumer to justify an intermediate value_info")
+
+    existing = [item for item in model.graph.value_info if item.name == tensor_name]
+    if existing:
+        existing_dtype, existing_shape = value_info_metadata(existing[0])
+        if existing_dtype == input_dtype and existing_shape == output_shape:
+            raise SystemExit(f"{tensor_name} already has the required value_info")
+        retained = [item for item in model.graph.value_info if item.name != tensor_name]
+        del model.graph.value_info[:]
+        model.graph.value_info.extend(retained)
+    model.graph.value_info.append(
+        helper.make_tensor_value_info(tensor_name, input_dtype, output_shape)
+    )
+    onnx.checker.check_model(model)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    onnx.save_model(model, output_path)
+    repaired = onnx.load(output_path)
+    onnx.checker.check_model(repaired)
+    dtype_name = TensorProto.DataType.Name(input_dtype).lower()
+    return {
+        "schema": "edgefit.onnx_value_info_repair.v1",
+        "source_model": source_path.name,
+        "source_sha256": sha256(source_path),
+        "repaired_model": output_path.name,
+        "repaired_sha256": sha256(output_path),
+        "tensor": tensor_name,
+        "producer": "com.microsoft::QLinearGlobalAveragePool",
+        "producer_name": producer.name or None,
+        "input_tensor": producer.input[0],
+        "output_zero_point": producer.input[4],
+        "consumers": consumers,
+        "dtype": dtype_name,
+        "input_shape": input_shape,
+        "shape": output_shape,
+        "channels_last": bool(channels_last),
+        "schema_source": QLINEAR_GLOBAL_AVERAGE_POOL_SCHEMA_SOURCE,
+    }
+
+
+def concrete_tensor_metadata(model: Any, tensor_name: str) -> tuple[int, list[int]]:
+    """从 value_info 或 initializer 读取完整元数据；动态或缺失维度直接拒绝。"""
+    for item in [*model.graph.input, *model.graph.value_info, *model.graph.output]:
+        if item.name == tensor_name:
+            dtype, shape = value_info_metadata(item)
+            if dtype and shape is not None and all(value > 0 for value in shape):
+                return dtype, shape
+    for initializer in model.graph.initializer:
+        if initializer.name == tensor_name:
+            return int(initializer.data_type), [int(value) for value in initializer.dims]
+    raise SystemExit(f"tensor metadata is not concrete: {tensor_name}")
+
+
+def value_info_metadata(value: Any) -> tuple[int, list[int] | None]:
+    tensor = value.type.tensor_type
+    shape = None
+    if tensor.HasField("shape"):
+        shape = []
+        for dimension in tensor.shape.dim:
+            if not dimension.HasField("dim_value"):
+                return int(tensor.elem_type), None
+            shape.append(int(dimension.dim_value))
+    return int(tensor.elem_type), shape
+
+
+def qlinear_global_average_pool_shape(input_shape: list[int], channels_last: int) -> list[int]:
+    """复现 ORT schema：保留 N/C，将全部空间维压为 1。"""
+    if len(input_shape) < 2:
+        raise SystemExit("QLinearGlobalAveragePool input rank must be at least 2")
+    output_shape = list(input_shape)
+    spatial_start = 1 if channels_last else 2
+    spatial_end = len(input_shape) - 1 if channels_last else len(input_shape)
+    for index in range(spatial_start, spatial_end):
+        output_shape[index] = 1
+    return output_shape
 
 
 def load_normalize():
