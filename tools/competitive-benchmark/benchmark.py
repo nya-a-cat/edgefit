@@ -65,6 +65,17 @@ def main() -> int:
         default=1,
         help="Repeat EdgeFit per case and report the median end-to-end process time.",
     )
+    parser.add_argument(
+        "--case-id",
+        action="append",
+        default=[],
+        help="Only run this benchmark case ID; repeat to select multiple cases.",
+    )
+    parser.add_argument(
+        "--measure-peak-rss",
+        action="store_true",
+        help="Measure EdgeFit peak RSS through GNU time on Linux.",
+    )
     args = parser.parse_args()
 
     try:
@@ -95,6 +106,9 @@ def benchmark(args: argparse.Namespace) -> dict[str, Any]:
         "edgefit" in selected_tools or args.edgefit_repetitions == 1,
         "--edgefit-repetitions requires the edgefit tool",
     )
+    if args.measure_peak_rss:
+        require(platform.system() == "Linux", "--measure-peak-rss requires Linux")
+        require(Path("/usr/bin/time").is_file(), "--measure-peak-rss requires /usr/bin/time")
 
     manifest_path = Path(args.manifest).resolve()
     manifest = read_json(manifest_path)
@@ -113,9 +127,11 @@ def benchmark(args: argparse.Namespace) -> dict[str, Any]:
     )
     target = declared_path(manifest_path, text_field(manifest, "default_target"))
     require(target.is_file(), f"missing target profile {target}")
-    cases = manifest.get("cases")
+    cases = select_case_specs(manifest.get("cases"), args.case_id)
     require(isinstance(cases, list) and cases, "benchmark manifest requires cases")
 
+    out_dir = Path(args.out_dir).resolve()
+    out_dir.mkdir(parents=True, exist_ok=True)
     prepared_cases = []
     seen = set()
     for case_spec in cases:
@@ -127,15 +143,28 @@ def benchmark(args: argparse.Namespace) -> dict[str, Any]:
         )
         require(case_id not in seen, f"duplicate benchmark case {case_id}")
         seen.add(case_id)
-        model_id = text_field(case_spec, "model_id")
-        require(model_id in models, f"unknown corpus model {model_id}")
-        model_path = resolve_model_path(models[model_id], cache)
-        verify_model(models[model_id], model_path)
-        prepared_cases.append((case_spec, models[model_id], model_path))
+        model_id = case_spec.get("model_id")
+        generated_model = case_spec.get("generated_model")
+        require(
+            (isinstance(model_id, str) and bool(model_id.strip()))
+            != isinstance(generated_model, dict),
+            f"case {case_id} requires exactly one of model_id or generated_model",
+        )
+        if isinstance(generated_model, dict):
+            model, model_path = prepare_generated_model(
+                case_id,
+                generated_model,
+                out_dir / "generated-models",
+            )
+        else:
+            model_id = str(model_id).strip()
+            require(model_id in models, f"unknown corpus model {model_id}")
+            model = models[model_id]
+            model_path = resolve_model_path(model, cache)
+        verify_model(model, model_path)
+        prepared_cases.append((case_spec, model, model_path))
 
     # 所有模型和清单先通过哈希预检，再启动任何被比较工具，避免留下半套证据。
-    out_dir = Path(args.out_dir).resolve()
-    out_dir.mkdir(parents=True, exist_ok=True)
     edgefit = Path(args.edgefit)
     started_at = utc_now()
     versions = probe_versions(edgefit, args.python, args.timeout_seconds, selected_tools)
@@ -151,6 +180,7 @@ def benchmark(args: argparse.Namespace) -> dict[str, Any]:
             args.timeout_seconds,
             selected_tools,
             args.edgefit_repetitions,
+            args.measure_peak_rss,
         )
         for case_spec, model, model_path in prepared_cases
     ]
@@ -170,12 +200,18 @@ def benchmark(args: argparse.Namespace) -> dict[str, Any]:
     comparisons_complete = all(
         comparison["status"] == "complete" for comparison in comparisons
     )
+    expectations_complete = all(
+        case["expectations"]["status"] == "pass" for case in results
+    )
     return {
         "schema": RESULT_SCHEMA,
-        "runner_version": "2",
+        "runner_version": "3",
         "status": (
             "complete"
-            if versions_complete and runs_complete and comparisons_complete
+            if versions_complete
+            and runs_complete
+            and comparisons_complete
+            and expectations_complete
             else "incomplete"
         ),
         "started_at": started_at,
@@ -190,6 +226,7 @@ def benchmark(args: argparse.Namespace) -> dict[str, Any]:
         },
         "tools": list(selected_tools),
         "edgefit_repetitions": args.edgefit_repetitions,
+        "peak_rss_measured": bool(args.measure_peak_rss),
         "tool_versions": versions,
         "case_count": len(results),
         "run_count": sum(status_counts.values()),
@@ -214,6 +251,101 @@ def benchmark(args: argparse.Namespace) -> dict[str, Any]:
     }
 
 
+def select_case_specs(value: Any, requested_ids: list[str]) -> list[dict[str, Any]]:
+    """按清单顺序选择案例，避免局部 CI 与完整证据使用不同定义。"""
+    require(isinstance(value, list) and value, "benchmark manifest requires cases")
+    require(all(isinstance(item, dict) for item in value), "benchmark cases must be objects")
+    if not requested_ids:
+        return value
+    require(len(requested_ids) == len(set(requested_ids)), "duplicate --case-id values")
+    available = {text_field(item, "id") for item in value}
+    unknown = sorted(set(requested_ids) - available)
+    require(not unknown, f"unknown case IDs: {', '.join(unknown)}")
+    selected = set(requested_ids)
+    return [item for item in value if text_field(item, "id") in selected]
+
+
+def prepare_generated_model(
+    case_id: str,
+    spec: dict[str, Any],
+    output_dir: Path,
+) -> tuple[dict[str, Any], Path]:
+    """生成确定性 Relu 链，用真实大图压测解析、分析、规划与报告全链。"""
+    require(spec.get("kind") == "linear_relu_chain", f"unsupported generator for {case_id}")
+    node_count = spec.get("node_count")
+    tensor_elements = spec.get("tensor_elements")
+    dtype = spec.get("dtype", "float32")
+    require(
+        isinstance(node_count, int) and not isinstance(node_count, bool) and 1 <= node_count <= 100_000,
+        f"generated node_count for {case_id} must be between 1 and 100000",
+    )
+    require(
+        isinstance(tensor_elements, int)
+        and not isinstance(tensor_elements, bool)
+        and 1 <= tensor_elements <= 65_536,
+        f"generated tensor_elements for {case_id} must be between 1 and 65536",
+    )
+    require(dtype == "float32", f"generated dtype for {case_id} must be float32")
+
+    generator_fingerprint = hashlib.sha256(
+        json.dumps(spec, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode(
+            "utf-8"
+        )
+    ).hexdigest()
+
+    values = [
+        {"name": f"v{index}", "dtype": dtype, "shape": [1, tensor_elements]}
+        for index in range(node_count - 1)
+    ]
+    nodes = []
+    for index in range(node_count):
+        nodes.append(
+            {
+                "name": f"relu_{index}",
+                "domain": "ai.onnx",
+                "op_type": "Relu",
+                "inputs": ["input" if index == 0 else f"v{index - 1}"],
+                "outputs": [f"v{index}"],
+            }
+        )
+    data = {
+        "schema": "edgefit.normalized_model.v1",
+        "model": {
+            "path": f"generated/{case_id}.onnx",
+            "file_bytes": 0,
+            # 生成案例没有原始 ONNX 文件；这里固定记录生成规格指纹，实际 JSON
+            # 文件哈希由案例 evidence_file 单独记录并在运行前校验。
+            "sha256": f"sha256:{generator_fingerprint}",
+        },
+        "graph": {
+            "inputs": [{"name": "input", "dtype": dtype, "shape": [1, tensor_elements]}],
+            "values": values,
+            "outputs": [{"name": f"v{node_count - 1}", "dtype": dtype, "shape": [1, tensor_elements]}],
+            "initializers": [],
+            "nodes": nodes,
+        },
+    }
+    # file_bytes 本身会改变 JSON 长度，迭代到位数稳定后再写入事实值。
+    text = ""
+    for _ in range(3):
+        text = json.dumps(data, ensure_ascii=False, separators=(",", ":")) + "\n"
+        size = len(text.encode("utf-8"))
+        if data["model"]["file_bytes"] == size:
+            break
+        data["model"]["file_bytes"] = size
+    output_path = output_dir / f"{case_id}.edgefit.json"
+    write_text(output_path, text)
+    model_hash = sha256(output_path)
+    return (
+        {
+            "id": f"generated:{case_id}",
+            "model_bytes": output_path.stat().st_size,
+            "model_sha256": model_hash,
+        },
+        output_path,
+    )
+
+
 def run_case(
     case_spec: dict[str, Any],
     model: dict[str, Any],
@@ -225,6 +357,7 @@ def run_case(
     timeout: int,
     selected_tools: tuple[str, ...],
     edgefit_repetitions: int,
+    measure_peak_rss: bool,
 ) -> dict[str, Any]:
     case_id = text_field(case_spec, "id")
     tags = case_spec.get("tags", [])
@@ -256,6 +389,7 @@ def run_case(
             case_dir / "edgefit-report.json",
             {**os.environ, "EDGEFIT_PYTHON": python},
             repetitions=edgefit_repetitions,
+            measure_peak_rss=measure_peak_rss,
         )
     if "ort-mobile" in selected_tools:
         tools["ort-mobile"] = run_tool(
@@ -291,6 +425,7 @@ def run_case(
             parse_onnx_tool,
             case_dir / "onnx-tool-profile.csv",
         )
+    expectations = evaluate_case_expectations(case_spec, tools)
     return {
         "id": case_id,
         "model_id": model["id"],
@@ -298,7 +433,70 @@ def run_case(
         "target": evidence_file(target),
         "purpose": str(case_spec.get("purpose", "")).strip(),
         "tags": tags,
+        "generated_model": case_spec.get("generated_model"),
         "tools": tools,
+        "expectations": expectations,
+    }
+
+
+def evaluate_case_expectations(
+    case_spec: dict[str, Any],
+    tools: dict[str, dict[str, Any]],
+) -> dict[str, Any]:
+    """把性能上限作为案例证据的一部分，缺失测量不能被当成零。"""
+    spec = case_spec.get("expectations", {})
+    require(isinstance(spec, dict), f"expectations for {case_spec.get('id')} must be an object")
+    unknown = sorted(
+        set(spec)
+        - {
+            "max_edgefit_duration_ms",
+            "max_edgefit_peak_rss_bytes",
+            "expected_edgefit_node_count",
+            "require_deterministic_artifact",
+        }
+    )
+    require(not unknown, f"unknown expectations for {case_spec.get('id')}: {', '.join(unknown)}")
+    if not spec:
+        return {"status": "pass", "checks": []}
+    edgefit = tools.get("edgefit")
+    require(edgefit is not None, f"expectations for {case_spec.get('id')} require edgefit")
+    checks = []
+
+    def add(name: str, actual: Any, limit: Any, passed: bool) -> None:
+        checks.append({"name": name, "actual": actual, "expected": limit, "passed": passed})
+
+    if "max_edgefit_duration_ms" in spec:
+        limit = spec["max_edgefit_duration_ms"]
+        require(
+            isinstance(limit, int) and not isinstance(limit, bool) and limit > 0,
+            "max_edgefit_duration_ms must be positive",
+        )
+        actual = edgefit.get("duration_ms")
+        add("max_edgefit_duration_ms", actual, limit, isinstance(actual, int) and actual <= limit)
+    if "max_edgefit_peak_rss_bytes" in spec:
+        limit = spec["max_edgefit_peak_rss_bytes"]
+        require(
+            isinstance(limit, int) and not isinstance(limit, bool) and limit > 0,
+            "max_edgefit_peak_rss_bytes must be positive",
+        )
+        actual = edgefit.get("peak_rss_bytes")
+        add("max_edgefit_peak_rss_bytes", actual, limit, isinstance(actual, int) and actual <= limit)
+    if "expected_edgefit_node_count" in spec:
+        expected = spec["expected_edgefit_node_count"]
+        require(
+            isinstance(expected, int) and not isinstance(expected, bool) and expected > 0,
+            "expected_edgefit_node_count must be positive",
+        )
+        actual = edgefit.get("observations", {}).get("node_count")
+        add("expected_edgefit_node_count", actual, expected, actual == expected)
+    if "require_deterministic_artifact" in spec:
+        expected = spec["require_deterministic_artifact"]
+        require(isinstance(expected, bool), "require_deterministic_artifact must be boolean")
+        actual = edgefit.get("artifact_deterministic")
+        add("require_deterministic_artifact", actual, expected, actual is expected)
+    return {
+        "status": "pass" if all(item["passed"] for item in checks) else "fail",
+        "checks": checks,
     }
 
 
@@ -312,10 +510,17 @@ def run_tool(
     artifact: Path | None = None,
     env: dict[str, str] | None = None,
     repetitions: int = 1,
+    measure_peak_rss: bool = False,
 ) -> dict[str, Any]:
-    if artifact and artifact.is_file():
-        artifact.unlink()
-    processes = [run_process(command, timeout, env) for _ in range(repetitions)]
+    processes = []
+    artifact_hashes = []
+    for _ in range(repetitions):
+        if artifact and artifact.is_file():
+            artifact.unlink()
+        process = run_process(command, timeout, env, measure_peak_rss)
+        processes.append(process)
+        if artifact and artifact.is_file():
+            artifact_hashes.append(sha256(artifact))
     statuses = [process_status(process, accepted_codes) for process in processes]
     first_failure = next(
         (index for index, status in enumerate(statuses) if status != "completed"),
@@ -329,9 +534,12 @@ def run_tool(
     observations: dict[str, Any] = {}
     detail = ""
     if status == "completed":
-        if artifact and not artifact.is_file():
+        if artifact and len(artifact_hashes) != repetitions:
             status = "runner_error"
             detail = f"{name} completed without writing its requested artifact"
+        elif len(set(artifact_hashes)) > 1:
+            status = "runner_error"
+            detail = f"{name} produced non-deterministic artifacts across repetitions"
         else:
             try:
                 observations = parser(combined, artifact)
@@ -358,6 +566,14 @@ def run_tool(
         "exit_code": process["exit_code"],
         "duration_ms": int(median(item["duration_ms"] for item in processes)),
         "duration_samples_ms": [item["duration_ms"] for item in processes],
+        "peak_rss_bytes": max(
+            (item["peak_rss_bytes"] for item in processes if item.get("peak_rss_bytes") is not None),
+            default=None,
+        ),
+        "peak_rss_samples_bytes": [item.get("peak_rss_bytes") for item in processes],
+        "artifact_sha256_samples": [f"sha256:{value}" for value in artifact_hashes],
+        "artifact_deterministic": len(artifact_hashes) == repetitions
+        and len(set(artifact_hashes)) <= 1,
         "command": [sanitize(arg) for arg in command],
         "observations": observations,
         "artifacts": artifacts,
@@ -447,6 +663,8 @@ def parse_edgefit(_: str, artifact: Path | None) -> dict[str, Any]:
         "unknown_dtype_tensors": metrics.get("unknown_dtype_tensors", []),
         "quantization_representation": metrics.get("quantization_representation"),
         "quantization_operator_coverage": metrics.get("quantization_operator_coverage"),
+        "node_count": metrics.get("node_count"),
+        "tensor_count": metrics.get("tensor_count"),
     }
 
 
@@ -526,12 +744,18 @@ def parse_onnx_tool(_: str, artifact: Path | None) -> dict[str, Any]:
 
 
 def run_process(
-    command: list[str], timeout: int, env: dict[str, str] | None = None
+    command: list[str],
+    timeout: int,
+    env: dict[str, str] | None = None,
+    measure_peak_rss: bool = False,
 ) -> dict[str, Any]:
     started = time.perf_counter_ns()
+    actual_command = command
+    if measure_peak_rss:
+        actual_command = ["/usr/bin/time", "-f", "EDGEFIT_MAX_RSS_KB=%M", *command]
     try:
         completed = subprocess.run(
-            command,
+            actual_command,
             cwd=ROOT,
             env=env,
             text=True,
@@ -540,12 +764,20 @@ def run_process(
             timeout=timeout,
             check=False,
         )
+        stderr = completed.stderr
+        peak_rss_bytes = None
+        if measure_peak_rss:
+            matches = re.findall(r"^EDGEFIT_MAX_RSS_KB=(\d+)\s*$", stderr, re.MULTILINE)
+            require(len(matches) == 1, "GNU time did not emit one peak RSS measurement")
+            peak_rss_bytes = int(matches[0]) * 1024
+            stderr = re.sub(r"^EDGEFIT_MAX_RSS_KB=\d+\s*$", "", stderr, flags=re.MULTILINE)
         return {
             "state": "finished",
             "exit_code": completed.returncode,
             "duration_ms": elapsed_ms(started),
             "stdout": completed.stdout,
-            "stderr": completed.stderr,
+            "stderr": stderr,
+            "peak_rss_bytes": peak_rss_bytes,
         }
     except FileNotFoundError as exc:
         return process_failure("unavailable", started, str(exc))
@@ -556,6 +788,7 @@ def run_process(
             "duration_ms": elapsed_ms(started),
             "stdout": process_text(exc.stdout),
             "stderr": process_text(exc.stderr),
+            "peak_rss_bytes": None,
         }
     except OSError as exc:
         return process_failure("runner_error", started, str(exc))
@@ -568,6 +801,7 @@ def process_failure(state: str, started: int, detail: str) -> dict[str, Any]:
         "duration_ms": elapsed_ms(started),
         "stdout": "",
         "stderr": detail,
+        "peak_rss_bytes": None,
     }
 
 
@@ -776,18 +1010,37 @@ def render_markdown(summary: dict[str, Any]) -> str:
             "",
             "## Results",
             "",
-            "| Case | Tool | Run | Exit | Duration | Observation |",
-            "| --- | --- | --- | ---: | ---: | --- |",
+            "| Case | Tool | Run | Exit | Duration | Peak RSS | Observation |",
+            "| --- | --- | --- | ---: | ---: | ---: | --- |",
         ]
     )
     for case in summary["cases"]:
         for tool in tools:
             result = case["tools"][tool]
             exit_code = result["exit_code"] if result["exit_code"] is not None else ""
+            peak_rss = result.get("peak_rss_bytes")
+            peak_rss_text = str(peak_rss) if peak_rss is not None else ""
             lines.append(
                 f"| `{md(case['id'])}` | `{tool}` | `{result['status']}` | {exit_code} | "
-                f"{result['duration_ms']} ms | {md(observation(tool, result))} |"
+                f"{result['duration_ms']} ms | {peak_rss_text} | {md(observation(tool, result))} |"
             )
+    expectation_cases = [case for case in summary["cases"] if case["expectations"]["checks"]]
+    if expectation_cases:
+        lines.extend(
+            [
+                "",
+                "## Case expectations",
+                "",
+                "| Case | Status | Check | Actual | Expected |",
+                "| --- | --- | --- | ---: | ---: |",
+            ]
+        )
+        for case in expectation_cases:
+            for check in case["expectations"]["checks"]:
+                lines.append(
+                    f"| `{md(case['id'])}` | `{case['expectations']['status']}` | "
+                    f"`{md(check['name'])}` | {md(check['actual'])} | {md(check['expected'])} |"
+                )
     if summary.get("comparisons"):
         lines.extend(["", "## Before/after comparisons", ""])
         for comparison in summary["comparisons"]:

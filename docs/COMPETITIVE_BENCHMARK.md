@@ -123,6 +123,32 @@ Windows 二进制路径应改为 `tmp/cargo-target/debug/edgefit.exe`。
 逻辑 activation 峰值、计划 arena 高水位、峰值节点和进程耗时。模型二进制
 只在 runner 临时目录使用，不上传为公开 Artifact。
 
+完整成熟度证据由 `.github/workflows/maturity-evidence.yml` 手动触发，分成两个
+互不争抢资源的 job：一个运行 1K、10K、100K 节点规划器规模证据，另一个运行
+固定 10 模型的三工具矩阵。竞品依赖固定为 `onnx==1.22.0`、
+`onnxruntime==1.22.0` 和 `onnx-tool==1.0.1`。模型仍从现有 corpus 清单下载并
+校验，不进入上传 Artifact。
+
+规模案例仍复用同一个 `benchmark.py`。清单声明确定性的 float32 Relu 线性链，
+runner 生成规范化 JSON 后运行 Release EdgeFit；Linux 使用 GNU time 记录子进程
+峰值 RSS。每个案例保留全部时延样本和报告哈希，重复运行报告不一致、缺少 RSS、
+节点数不符或超过案例上限都会使证据不完整。10K 案例进入普通 PR `ci-gate`，
+100K 案例只在托管成熟度工作流运行，避免三平台 PR 重复消耗资源。
+
+生成案例的报告模型哈希是生成规格的 SHA-256 指纹；实际规范化 JSON 的字节数与
+SHA-256 由案例文件证据单独记录，并在启动 EdgeFit 前校验。二者不混用，避免把
+不存在的原始 ONNX 哈希包装成真实来源证据。
+
+```bash
+python tools/competitive-benchmark/benchmark.py \
+  --manifest tools/competitive-benchmark/planner_scale_manifest.json \
+  --edgefit target/release/edgefit \
+  --tools edgefit \
+  --edgefit-repetitions 5 \
+  --measure-peak-rss \
+  --out-dir tmp/performance-evidence
+```
+
 ## 输出
 
 ```text
@@ -159,7 +185,7 @@ tmp/competitive_benchmark/
 - 编排成本为 `O(C × (E + O + T))`，三个工具按固定顺序串行执行，避免并发争抢 CPU 和内存影响结果。
 - 证据磁盘占用为模型外的 `O(C × 工具输出大小)`；模型本身复用既有 corpus cache。
 - 默认计时是一次独立进程的端到端 wall time；Alpha 案例固定报告 7 次运行的中位数。两者都包括 Python 启动和模型读取，不是微基准，更不是设备推理延迟。
-- 第一阶段不跨平台采集子进程峰值 RSS，因为 Python 标准库缺少一致的 Windows/Linux 实现；不能把缺失值伪装成零。
+- 普通竞品矩阵不跨平台比较 RSS；规模证据只在 Linux 上通过 GNU time 采集 EdgeFit 子进程峰值 RSS，其他平台的缺失值保持为空，不能伪装成零。
 
 EdgeFit 的 activation planner 使用增量 live-byte 计数和按 offset/size
 建立双索引的 best-fit free list。设 profile 规则数为 `P`、张量数为 `T`、

@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import importlib.util
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -34,6 +35,67 @@ class BenchmarkComparisonTests(unittest.TestCase):
             self.benchmark.parse_tool_selection("edgefit,edgefit")
         with self.assertRaises(self.benchmark.InputError):
             self.benchmark.parse_tool_selection("edgefit,unknown")
+
+    def test_case_selection_preserves_manifest_order(self) -> None:
+        cases = [{"id": "first"}, {"id": "second"}, {"id": "third"}]
+
+        selected = self.benchmark.select_case_specs(cases, ["third", "first"])
+
+        self.assertEqual([item["id"] for item in selected], ["first", "third"])
+        with self.assertRaises(self.benchmark.InputError):
+            self.benchmark.select_case_specs(cases, ["missing"])
+
+    def test_generated_linear_chain_is_deterministic_and_self_describing(self) -> None:
+        spec = {
+            "kind": "linear_relu_chain",
+            "node_count": 3,
+            "tensor_elements": 16,
+            "dtype": "float32",
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            first, first_path = self.benchmark.prepare_generated_model(
+                "scale",
+                spec,
+                Path(directory) / "first",
+            )
+            second, second_path = self.benchmark.prepare_generated_model(
+                "scale",
+                spec,
+                Path(directory) / "second",
+            )
+            data = self.benchmark.read_json(first_path)
+
+        self.assertEqual(first["model_sha256"], second["model_sha256"])
+        self.assertEqual(first["model_bytes"], second["model_bytes"])
+        self.assertEqual(data["model"]["file_bytes"], first["model_bytes"])
+        self.assertRegex(data["model"]["sha256"], r"^sha256:[0-9a-f]{64}$")
+        self.assertEqual(len(data["graph"]["nodes"]), 3)
+        self.assertEqual(len(data["graph"]["values"]), 2)
+
+    def test_performance_expectations_fail_closed_on_missing_rss(self) -> None:
+        case = {
+            "id": "scale",
+            "expectations": {
+                "max_edgefit_duration_ms": 100,
+                "max_edgefit_peak_rss_bytes": 1024,
+                "expected_edgefit_node_count": 3,
+                "require_deterministic_artifact": True,
+            },
+        }
+        tools = {
+            "edgefit": {
+                "duration_ms": 10,
+                "peak_rss_bytes": None,
+                "artifact_deterministic": True,
+                "observations": {"node_count": 3},
+            }
+        }
+
+        result = self.benchmark.evaluate_case_expectations(case, tools)
+
+        self.assertEqual(result["status"], "fail")
+        failed = [item["name"] for item in result["checks"] if not item["passed"]]
+        self.assertEqual(failed, ["max_edgefit_peak_rss_bytes"])
 
     def test_comparison_reports_reduction_and_peak_transition(self) -> None:
         cases = [

@@ -71,10 +71,30 @@ jobs:
             edgefit-summary.md
           if-no-files-found: error
 
+  performance-smoke:
+    name: Planner performance smoke
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+      - name: Build release CLI
+        run: cargo build --workspace --release --locked
+      - name: Verify deterministic 10K-node planning
+        run: |
+          python tools/competitive-benchmark/benchmark.py \
+            --manifest tools/competitive-benchmark/planner_scale_manifest.json \
+            --edgefit target/release/edgefit \
+            --tools edgefit \
+            --case-id planner-linear-10000 \
+            --edgefit-repetitions 3 \
+            --measure-peak-rss \
+            --out-dir tmp/performance-smoke
+
   ci-gate:
     name: ci-gate
     if: ${{ always() }}
-    needs: [rust, python, action-smoke]
+    needs: [rust, python, action-smoke, performance-smoke]
     runs-on: ubuntu-latest
     steps:
       - name: Enforce required jobs
@@ -82,7 +102,9 @@ jobs:
           RUST_RESULT: ${{ needs.rust.result }}
           PYTHON_RESULT: ${{ needs.python.result }}
           ACTION_RESULT: ${{ needs.action-smoke.result }}
+          PERFORMANCE_RESULT: ${{ needs.performance-smoke.result }}
         run: |
           test "$RUST_RESULT" = success
           test "$PYTHON_RESULT" = success
           test "$ACTION_RESULT" = success
+          test "$PERFORMANCE_RESULT" = success
