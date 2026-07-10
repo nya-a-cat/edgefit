@@ -8,13 +8,37 @@
 - ONNX Runtime Mobile Model Usability Checker：ORT Mobile、NNAPI 与 CoreML 的模型适用性和分区估计。
 - onnx-tool：shape inference、MACs、参数和逐节点内存统计。
 
-源码入口为 `tools/competitive-benchmark/benchmark.py`，案例清单为 `tools/competitive-benchmark/benchmark_manifest.json`。当前只完成源码，尚未运行基准。
+源码入口为 `tools/competitive-benchmark/benchmark.py`，案例清单为 `tools/competitive-benchmark/benchmark_manifest.json`。完整三工具基准尚未运行；聚焦 EdgeFit 的 Alpha 案例已在 GitHub 托管 runner 上执行。
 
 Prototype → Alpha 的第一条聚焦证据使用同一 CLI 和
 `tools/competitive-benchmark/alpha_case_manifest.json`，对比 ONNX Model Zoo
 SqueezeNet 1.0 的 FP32 与 INT8 QOperator 文件。工作流只下载清单中这两个
 SHA-256 固定模型，并重复运行 EdgeFit 7 次，以同一托管 runner 上的端到端
 进程耗时中位数降低偶发启动噪声。
+
+## 首条托管 Alpha 证据
+
+[GitHub Actions run 29093503757](https://github.com/nya-a-cat/edgefit/actions/runs/29093503757)
+在同一个 Ubuntu runner 上完成模型哈希/结构校验、Release 构建和 FP32/INT8
+各 7 次 EdgeFit 分析。结果如下：
+
+| 指标 | FP32 基线 | INT8 候选 | 变化 |
+| --- | ---: | ---: | ---: |
+| 模型文件 | 4,952,956 B | 1,293,388 B | -73.89% |
+| initializer | 4,941,988 B | 1,267,228 B | -74.36% |
+| 逻辑 activation 峰值 | 6,308,352 B | 3,097,600 B | -50.90% |
+| 计划 arena 高水位 | 6,910,464 B | 3,864,384 B | -44.08% |
+| EdgeFit 进程耗时中位数 | 226 ms | 218 ms | -3.54% |
+| 部署判定 | pass | fail | 被证据完整性门槛阻断 |
+
+INT8 候选不是因为内存超预算或算子不受支持而失败。自定义量化链末端的
+`pool10_1_quantized` 缺少可证明的 dtype 和 size，触发 `EF0302` 与
+`EF0502`；同时 `EF0104` 明确把峰值可信度降为 medium。这个结果说明模型
+压缩率不能替代部署验证，也是 EdgeFit 当前最直接的商业价值：在集成运行时
+或固件前阻止“模型更小，所以一定能部署”的错误判断。
+
+这仍不是设备实测。耗时只是托管 runner 上包含进程和 Python adapter 启动的
+端到端时间，arena 是 target profile 下的确定性静态规划值。
 
 ## 为什么不直接比较“谁通过了更多模型”
 
