@@ -27,6 +27,33 @@ fn run(args: &[&str]) -> Output {
         .expect("run edgefit")
 }
 
+#[test]
+fn alpha_command_and_exit_code_contract_is_stable() {
+    let help = run(&["--help"]);
+    assert_eq!(help.status.code(), Some(0));
+    let help_text = String::from_utf8_lossy(&help.stdout);
+    for command in [
+        "target validate <profile>",
+        "check <model.onnx|model.edgefit.json>",
+        "snapshot <model.onnx|model.edgefit.json>",
+        "diff --old path --new path",
+    ] {
+        assert!(help_text.contains(command), "missing command contract: {command}");
+    }
+
+    let no_args = run(&[]);
+    assert_eq!(no_args.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&no_args.stdout).contains("edgefit <command>"));
+
+    let unknown = run(&["unknown"]);
+    assert_eq!(unknown.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&unknown.stderr).contains("unknown command unknown"));
+
+    let version = run(&["--version"]);
+    assert_eq!(version.status.code(), Some(0));
+    assert!(String::from_utf8_lossy(&version.stdout).starts_with("edgefit "));
+}
+
 fn unique_dir(name: &str) -> PathBuf {
     let stamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -276,6 +303,7 @@ fn snapshot_diff_reports_regression() {
     let good = dir.join("good.json");
     let bad = dir.join("bad.json");
     let diff = dir.join("diff.md");
+    let diff_json = dir.join("diff.json");
 
     let good_output = run(&[
         "snapshot",
@@ -310,6 +338,22 @@ fn snapshot_diff_reports_regression() {
     let text = fs::read_to_string(&diff).expect("diff report");
     assert!(text.contains("EF0201"));
     assert!(text.contains("model_file_bytes"));
+
+    let json_output = run(&[
+        "diff",
+        "--old",
+        good.to_str().expect("good path"),
+        "--new",
+        bad.to_str().expect("bad path"),
+        "--format",
+        "json",
+        "--out",
+        diff_json.to_str().expect("diff json path"),
+    ]);
+    assert_eq!(json_output.status.code(), Some(1));
+    let json = fs::read_to_string(&diff_json).expect("diff json report");
+    assert!(json.contains("\"schema\": \"edgefit.diff.v1\""));
+    parse_json(&json).expect("parse diff json report");
 
     fs::remove_dir_all(dir).expect("cleanup temp dir");
 }

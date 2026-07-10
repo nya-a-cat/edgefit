@@ -15,6 +15,9 @@ The public implementation boundary is:
   `edgefit diff` as the first command surface.
 - text, JSON, Markdown, and SARIF report output with stable diagnostic locations.
 
+The command surface, exit codes, and machine-output compatibility policy are
+defined in `docs/CLI_CONTRACT.md`.
+
 ## Quick Start
 
 ```powershell

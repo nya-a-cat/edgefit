@@ -12,6 +12,10 @@ use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 const EDGEFIT_VERSION: &str = env!("CARGO_PKG_VERSION");
+// Alpha 自动化契约：区分通过、策略阻断和无法产出可信结果三类状态。
+const EXIT_PASS: i32 = 0;
+const EXIT_POLICY_FAIL: i32 = 1;
+const EXIT_USAGE_ERROR: i32 = 2;
 const EMBEDDED_ONNX_ADAPTER: &str =
     include_str!("../../../tools/onnx-normalize/normalize_onnx.py");
 
@@ -20,7 +24,7 @@ fn main() {
         Ok(code) => code,
         Err(err) => {
             eprintln!("edgefit: {err}");
-            2
+            EXIT_USAGE_ERROR
         }
     };
     std::process::exit(code);
@@ -29,7 +33,7 @@ fn main() {
 fn run(args: Vec<String>) -> Result<i32, String> {
     if args.is_empty() {
         print_help();
-        return Ok(2);
+        return Ok(EXIT_USAGE_ERROR);
     }
     match args[0].as_str() {
         "target" => run_target(&args[1..]),
@@ -38,11 +42,11 @@ fn run(args: Vec<String>) -> Result<i32, String> {
         "diff" => run_diff(&args[1..]),
         "version" | "-V" | "--version" => {
             println!("edgefit {EDGEFIT_VERSION}");
-            Ok(0)
+            Ok(EXIT_PASS)
         }
         "-h" | "--help" => {
             print_help();
-            Ok(0)
+            Ok(EXIT_PASS)
         }
         other => Err(format!("unknown command {other}")),
     }
@@ -54,7 +58,7 @@ fn run_target(args: &[String]) -> Result<i32, String> {
     }
     let profile = load_profile(&args[1])?;
     println!("ok: {}", profile.target_id);
-    Ok(0)
+    Ok(EXIT_PASS)
 }
 
 fn run_check(args: &[String]) -> Result<i32, String> {
@@ -77,7 +81,11 @@ fn run_check(args: &[String]) -> Result<i32, String> {
     if let Some(summary) = parsed.summary.as_deref() {
         write_or_print(&render_report(&report, "markdown"), Some(summary))?;
     }
-    Ok(if report.status == "fail" { 1 } else { 0 })
+    Ok(if report.status == "fail" {
+        EXIT_POLICY_FAIL
+    } else {
+        EXIT_PASS
+    })
 }
 
 fn run_snapshot(args: &[String]) -> Result<i32, String> {
@@ -91,7 +99,11 @@ fn run_snapshot(args: &[String]) -> Result<i32, String> {
         check_model(&prepared.path, target)?
     };
     write_or_print(&render_snapshot(&report), Some(out))?;
-    Ok(if report.status == "fail" { 1 } else { 0 })
+    Ok(if report.status == "fail" {
+        EXIT_POLICY_FAIL
+    } else {
+        EXIT_PASS
+    })
 }
 
 fn run_diff(args: &[String]) -> Result<i32, String> {
@@ -132,7 +144,11 @@ fn run_diff(args: &[String]) -> Result<i32, String> {
     let new = load_snapshot(&new.ok_or("--new is required")?)?;
     let diff = diff_snapshots(&old, &new)?;
     write_or_print(&render_diff(&diff, &format), out.as_deref())?;
-    Ok(if diff.status == "fail" { 1 } else { 0 })
+    Ok(if diff.status == "fail" {
+        EXIT_POLICY_FAIL
+    } else {
+        EXIT_PASS
+    })
 }
 
 struct ModelCommand {
