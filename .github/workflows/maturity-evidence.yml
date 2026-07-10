@@ -60,6 +60,7 @@ jobs:
         run: |
           python tools/onnx-normalize/real_world_corpus.py \
             --download \
+            --file-integrity-only \
             --cache tmp/real_world_corpus \
             --model-id onnx-model-zoo-mnist-8 \
             --model-id onnx-model-zoo-mnist-12-int8 \
