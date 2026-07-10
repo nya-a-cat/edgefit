@@ -22,7 +22,14 @@ jobs:
           apt-get update
           DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
             ca-certificates curl libgcrypt20 libglib2.0-0 libpixman-1-0 libsdl2-2.0-0 libslirp0
-          python "$IDF_PATH/tools/idf_tools.py" install qemu-xtensa
+          qemu_url="https://github.com/espressif/qemu/releases/download/esp-develop-9.2.2-20260417/qemu-xtensa-softmmu-esp_develop_9.2.2_20260417-x86_64-linux-gnu.tar.xz"
+          qemu_archive="/tmp/qemu-xtensa.tar.xz"
+          qemu_dir="/opt/espressif-qemu"
+          curl --fail --location --silent --show-error "$qemu_url" --output "$qemu_archive"
+          echo "0eecb2a34a5586c0e59110f77b9343b7b336e82fdb0e1a30e1dc1bab8a547e35  $qemu_archive" | sha256sum --check
+          mkdir -p "$qemu_dir"
+          tar -xJf "$qemu_archive" -C "$qemu_dir" --strip-components=1
+          echo "$qemu_dir/bin" >> "$GITHUB_PATH"
       - name: Build firmware and run simulated model test
         shell: bash
         run: |
