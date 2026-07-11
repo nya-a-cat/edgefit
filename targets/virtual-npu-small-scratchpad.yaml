@@ -39,7 +39,7 @@ opsets:
 accelerator:
   id: generic-npu-small-scratchpad-v1
   confidence: seed-simulated
-  scratchpad_bytes: 3072
+  scratchpad_bytes: 6144
   tensor_alignment_bytes: 64
   dma_burst_bytes: 64
   dma_setup_ns: 500

@@ -138,22 +138,22 @@
     },
     {
       "id": "optimizer-spill-reload",
-      "purpose": "Deterministic simulated spill attempts with explicit capacity blockers",
-      "tags": ["optimizer", "scratchpad", "spill", "blocker", "simulated"],
+      "purpose": "Deterministic simulated scratchpad spill and reload evidence",
+      "tags": ["optimizer", "scratchpad", "spill", "reload", "simulated"],
       "edgefit_command": "optimize",
       "target": "../../targets/virtual-npu-small-scratchpad.yaml",
       "model_path": "../../examples/models/virtual_npu_spill.edgefit.json",
       "expectations": {
         "require_deterministic_artifact": true,
-        "expected_plan_status": "fail",
+        "expected_plan_status": "pass",
         "expected_plan_assignment_count": 6,
         "expected_plan_assignment_counts": {"npu": 6},
         "expected_plan_segment_count": 1,
-        "min_plan_event_kind_counts": {"load": 2, "spill": 1},
+        "min_plan_event_kind_counts": {"load": 2, "reload": 1, "spill": 1, "store": 1},
         "min_plan_spill_bytes": 1,
         "min_plan_transfer_bytes": 1,
-        "max_plan_peak_scratchpad_bytes": 3072,
-        "required_plan_blockers": ["node:2 tensor:d scratchpad_unavailable"],
+        "max_plan_peak_scratchpad_bytes": 6144,
+        "expected_plan_blockers": [],
         "expected_plan_recipe_ids": []
       }
     },

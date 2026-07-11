@@ -195,8 +195,7 @@ HardSwish 线性图，并引用仅用于测试的分段和小 scratchpad profile
 
 普通 PR 在 GitHub runner 上重复三次 10K-node optimize；手动
 `.github/workflows/optimizer-evidence.yml` 重复五次完整的 1K/10K/100K、recipe、
-CPU/NPU 分段、受压 spill blocker 和 no-spill blocker 案例。输出中的
-optimizer
+CPU/NPU 分段、spill/reload 和 no-spill blocker 案例。输出中的 optimizer
 latency 仍完全来自 simulated profile。托管 duration 与 RSS 只表示完整 CLI
 进程在该 runner 上的观测，
 两者都不代表设备推理性能。

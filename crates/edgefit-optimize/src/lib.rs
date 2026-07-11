@@ -753,7 +753,7 @@ mod tests {
             ("Add", &["c", "a"], &["e"]),
             ("Add", &["e", "d"], &["y"]),
         ]);
-        let mut profile = parse_test_profile(3_072, true, 10_000, 1, 1);
+        let mut profile = parse_test_profile(6_144, true, 10_000, 1, 1);
         profile
             .allowed_ops
             .get_mut(&("ai.onnx".to_string(), "Add".to_string()))
@@ -765,14 +765,12 @@ mod tests {
         let kinds = first.events.iter().map(|event| event.kind.as_str()).collect::<Vec<_>>();
 
         assert_eq!(first, second);
-        assert_eq!(first.status, "fail");
+        assert_eq!(first.status, "pass");
         assert!(first.spill_bytes > 0);
         assert!(kinds.contains(&"spill"));
-        assert!(first
-            .blockers
-            .iter()
-            .any(|blocker| blocker.contains("scratchpad_unavailable")));
-        assert!(first.peak_scratchpad_bytes <= 3_072);
+        assert!(kinds.contains(&"reload"));
+        assert!(first.blockers.is_empty());
+        assert!(first.peak_scratchpad_bytes <= 6_144);
     }
 
     #[test]

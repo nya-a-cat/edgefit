@@ -37,7 +37,7 @@ The evidence suite covers:
   model and target profile fingerprints;
 - trusted `HardSwish` replacement recipes when the CPU baseline is unavailable;
 - deterministic CPU boundaries and multiple NPU segments;
-- constrained scratchpad spill attempts with explicit unresolved-capacity blockers;
+- constrained scratchpad spill/reload behavior;
 - fail-closed planning when spill is disabled;
 - hosted end-to-end CLI duration and peak RSS.
 
@@ -52,6 +52,5 @@ The manifest is
 profiles exist only to create reproducible partition and pressure cases:
 
 - `targets/virtual-npu-segmented.yaml` creates a deterministic CPU boundary;
-- `targets/virtual-npu-small-scratchpad.yaml` exercises deterministic spill attempts
-  and unresolved-capacity blockers;
+- `targets/virtual-npu-small-scratchpad.yaml` exercises deterministic spill/reload;
 - `targets/virtual-npu-no-spill.yaml` requires the same pressure to fail closed.
