@@ -192,9 +192,19 @@ pub fn load_normalized_model(path: impl AsRef<Path>) -> EdgeFitResult<Normalized
     load_normalized_model_with_provenance(path, false)
 }
 
+/// 从内存中的规范化 JSON 加载受信输入；用于 Python 框架等稳定绑定层。
+pub fn parse_normalized_model(text: &str) -> EdgeFitResult<NormalizedModel> {
+    parse_normalized_model_with_provenance(text, false)
+}
+
 /// 加载由 CLI 适配流程刚生成的临时 JSON；调用方必须通过原始 `.onnx` 输入建立来源。
 pub fn load_cli_adapter_output(path: impl AsRef<Path>) -> EdgeFitResult<NormalizedModel> {
     load_normalized_model_with_provenance(path, true)
+}
+
+/// 解析刚由受控 ONNX 适配器生成的内存 JSON；调用方必须保留原始 ONNX 来源边界。
+pub fn parse_cli_adapter_output(text: &str) -> EdgeFitResult<NormalizedModel> {
+    parse_normalized_model_with_provenance(text, true)
 }
 
 fn load_normalized_model_with_provenance(
@@ -214,7 +224,14 @@ fn load_normalized_model_with_provenance(
         );
     }
     let text = fs::read_to_string(path).map_err(|err| format!("failed to read model: {err}"))?;
-    let root = parse_json(&text)?;
+    parse_normalized_model_with_provenance(&text, adapter_generated)
+}
+
+fn parse_normalized_model_with_provenance(
+    text: &str,
+    adapter_generated: bool,
+) -> EdgeFitResult<NormalizedModel> {
+    let root = parse_json(text)?;
     let root = root
         .as_object()
         .ok_or("normalized model must be a JSON object")?;

@@ -1,11 +1,12 @@
 use edgefit_analyze::analyze;
 use edgefit_ir::{
-    load_cli_adapter_output, load_normalized_model, EdgeFitResult, NormalizedModel,
+    load_cli_adapter_output, load_normalized_model, parse_cli_adapter_output,
+    parse_normalized_model, EdgeFitResult, NormalizedModel,
 };
 use edgefit_policy::{evaluate, suppress_diagnostics};
-use edgefit_report::{build_report, Report};
-use edgefit_target::load_profile;
-use std::path::Path;
+use edgefit_report::{build_report, render_report, Report};
+use edgefit_target::{load_profile, parse_profile, TargetProfile};
+use std::path::{Path, PathBuf};
 
 pub fn check_model(
     model_path: impl AsRef<Path>,
@@ -33,12 +34,82 @@ pub fn check_adapter_generated_model_with_suppressions(
     check_loaded_model(model, target_path, suppressed_ids)
 }
 
+/// 检查内存中的规范化 JSON 与 target profile；该入口不授予 ONNX 适配来源。
+pub fn check_normalized_text(
+    model_text: &str,
+    target_text: &str,
+    target_source: &str,
+    suppressed_ids: &[String],
+) -> EdgeFitResult<Report> {
+    let model = parse_normalized_model(model_text)?;
+    check_loaded_model_with_profile(
+        model,
+        parse_target_text(target_text, target_source)?,
+        suppressed_ids,
+    )
+}
+
+/// 检查受控 ONNX 适配器刚生成的内存 JSON；仅供 CLI/Python 框架的直接 ONNX 路径调用。
+pub fn check_adapter_generated_text(
+    model_text: &str,
+    target_text: &str,
+    target_source: &str,
+    suppressed_ids: &[String],
+) -> EdgeFitResult<Report> {
+    let model = parse_cli_adapter_output(model_text)?;
+    check_loaded_model_with_profile(
+        model,
+        parse_target_text(target_text, target_source)?,
+        suppressed_ids,
+    )
+}
+
+/// 返回 Rust 核心生成的 canonical 单模型报告，供 Python 与其他绑定复用。
+pub fn render_normalized_text(
+    model_text: &str,
+    target_text: &str,
+    target_source: &str,
+    suppressed_ids: &[String],
+    format: &str,
+) -> EdgeFitResult<String> {
+    check_normalized_text(model_text, target_text, target_source, suppressed_ids)
+        .map(|report| render_report(&report, format))
+}
+
+/// 返回直接 ONNX 适配路径的 canonical 单模型报告。
+pub fn render_adapter_generated_text(
+    model_text: &str,
+    target_text: &str,
+    target_source: &str,
+    suppressed_ids: &[String],
+    format: &str,
+) -> EdgeFitResult<String> {
+    check_adapter_generated_text(model_text, target_text, target_source, suppressed_ids)
+        .map(|report| render_report(&report, format))
+}
+
+pub fn validate_target_text(target_text: &str, target_source: &str) -> EdgeFitResult<String> {
+    parse_target_text(target_text, target_source).map(|profile| profile.target_id)
+}
+
 fn check_loaded_model(
     model: NormalizedModel,
     target_path: impl AsRef<Path>,
     suppressed_ids: &[String],
 ) -> EdgeFitResult<Report> {
     let profile = load_profile(target_path)?;
+    check_loaded_model_with_profile(model, profile, suppressed_ids)
+}
+
+fn parse_target_text(text: &str, source: &str) -> EdgeFitResult<TargetProfile> {
+    parse_profile(text, PathBuf::from(source))
+}
+
+fn check_loaded_model_with_profile(
+    model: NormalizedModel,
+    profile: TargetProfile,
+    suppressed_ids: &[String],
+) -> EdgeFitResult<Report> {
     let metrics = analyze(&model, &profile);
     let policy = suppress_diagnostics(evaluate(&model, &profile, &metrics), suppressed_ids);
     Ok(build_report(&model, &profile, metrics, policy))

@@ -68,6 +68,20 @@ The adapter delegates model validation and shape inference to the pinned
 official ONNX package. It is replaceable; the Rust analysis and policy core do
 not depend on Python packages.
 
+### Python framework
+
+The optional Python package uses a prebuilt PyO3 extension over the same Rust
+engine. It does not compile Rust source during import:
+
+```python
+import edgefit
+
+report = edgefit.check("model.onnx", "targets/device.yaml")
+reports = edgefit.batch(["a.onnx", "b.onnx"], "targets/device.yaml")
+```
+
+See [Python API](docs/PYTHON_API.md) for the module CLI and binding boundary.
+
 ## Use It as a Pull Request Gate
 
 ```yaml

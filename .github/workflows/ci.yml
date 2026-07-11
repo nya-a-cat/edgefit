@@ -71,6 +71,32 @@ jobs:
       - name: Run benchmark orchestration tests
         run: python -m unittest discover -s tools/competitive-benchmark -p "test_*.py"
 
+  python_framework:
+    name: Python framework (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-14]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.12"
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master snapshot
+        with:
+          toolchain: 1.97.0
+      - name: Build native CLI
+        run: cargo build --locked --bin edgefit
+      - name: Build and install Python framework
+        run: python -m pip install ./python
+      - name: Verify Python and Rust parity
+        run: python -m unittest discover -s python/tests -p "test_*.py"
+
   action-smoke:
     name: Composite Action smoke
     runs-on: ubuntu-latest
@@ -133,7 +159,7 @@ jobs:
   ci-gate:
     name: ci-gate
     if: ${{ always() }}
-    needs: [rust, lint, python, action-smoke, performance-smoke]
+    needs: [rust, lint, python, python_framework, action-smoke, performance-smoke]
     runs-on: ubuntu-latest
     steps:
       - name: Enforce required jobs
@@ -141,11 +167,13 @@ jobs:
           RUST_RESULT: ${{ needs.rust.result }}
           LINT_RESULT: ${{ needs.lint.result }}
           PYTHON_RESULT: ${{ needs.python.result }}
+          PYTHON_FRAMEWORK_RESULT: ${{ needs.python_framework.result }}
           ACTION_RESULT: ${{ needs.action-smoke.result }}
           PERFORMANCE_RESULT: ${{ needs.performance-smoke.result }}
         run: |
           test "$RUST_RESULT" = success
           test "$LINT_RESULT" = success
           test "$PYTHON_RESULT" = success
+          test "$PYTHON_FRAMEWORK_RESULT" = success
           test "$ACTION_RESULT" = success
           test "$PERFORMANCE_RESULT" = success
