@@ -83,7 +83,7 @@ jobs:
       security-events: write
     steps:
       - uses: actions/checkout@v4
-      - uses: nya-a-cat/edgefit@main
+      - uses: nya-a-cat/edgefit@v0.2.0-alpha.1
         with:
           model: models/model.onnx
           target: targets/device.yaml
@@ -91,10 +91,11 @@ jobs:
           summary: edgefit-summary.md
 ```
 
-Until the first stable tag is published, pin long-lived workflows to a reviewed
-commit SHA rather than `main`. The Action validates the target, runs the check,
-publishes the Markdown job summary, and then restores the EdgeFit exit status.
-See [GitHub Action usage](docs/GITHUB_ACTION_USAGE.md) for SARIF upload,
+`v0.2.0-alpha.1` is a prerelease intended for reproducible evaluation. Until a
+stable tag is published, pin long-lived or production workflows to a reviewed
+full commit SHA. The Action validates the target, runs the check, publishes the
+Markdown job summary, and then restores the EdgeFit exit status. See
+[GitHub Action usage](docs/GITHUB_ACTION_USAGE.md) for SARIF upload,
 suppression, and fork-PR handling.
 
 ## What Gets Verified

@@ -23,7 +23,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Run EdgeFit
-        uses: nya-a-cat/edgefit@main
+        uses: nya-a-cat/edgefit@v0.2.0-alpha.1
         with:
           model: models/model.onnx
           target: targets/esp32s3.yaml
@@ -37,9 +37,9 @@ jobs:
           sarif_file: edgefit.sarif
 ```
 
-Until the first stable tag is published, pin production use to a reviewed
-commit SHA instead of following `main`. Version tags will be documented here
-after their release artifacts pass the candidate workflow.
+`v0.2.0-alpha.1` is a prerelease intended for reproducible evaluation. Until a
+stable tag is published, pin long-lived or production workflows to a reviewed
+full commit SHA rather than following `main` or a movable branch.
 
 Use `install-onnx: "false"` for pre-normalized `*.edgefit.json` files.
 Use `suppressions` for accepted diagnostics that should remain visible in the
