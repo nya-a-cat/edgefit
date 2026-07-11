@@ -607,6 +607,8 @@ mod tests {
             fp32_allowed: None,
             max_opset_versions: BTreeMap::new(),
             allowed_ops,
+            accelerator: None,
+            replacement_recipes: BTreeMap::new(),
             quantization_required: false,
             require_int8: false,
             min_quantized_weight_fraction: None,
@@ -697,6 +699,8 @@ mod tests {
                 max_rank: None,
                 workspace_bytes: 0,
                 first_output_inplace_input_index: None,
+                cpu_cost: None,
+                npu_cost: None,
             },
         );
         let metrics = analyze(&model, &test_profile(allowed_ops));
@@ -754,6 +758,8 @@ mod tests {
                 max_rank: Some(4),
                 workspace_bytes: 0,
                 first_output_inplace_input_index: None,
+                cpu_cost: None,
+                npu_cost: None,
             },
         );
         let metrics = analyze(&model, &test_profile(allowed_ops));
@@ -820,6 +826,8 @@ mod tests {
                 max_rank: None,
                 workspace_bytes: 8,
                 first_output_inplace_input_index: Some(0),
+                cpu_cost: None,
+                npu_cost: None,
             },
         )]));
         profile.tensor_alignment_bytes = 16;

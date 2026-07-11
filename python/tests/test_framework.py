@@ -39,6 +39,23 @@ class FrameworkTests(unittest.TestCase):
         self.assertEqual(len(reports), 2)
         self.assertEqual(reports[0], reports[1])
 
+    def test_optimization_matches_rust_cli(self) -> None:
+        model = ROOT / "examples/models/virtual_npu_tiny.edgefit.json"
+        target = ROOT / "targets/virtual-npu.yaml"
+        python_plan = edgefit.optimize(model, target)
+
+        binary = ROOT / "target/debug" / ("edgefit.exe" if os.name == "nt" else "edgefit")
+        completed = subprocess.run(
+            [str(binary), "optimize", str(model), "--target", str(target), "--format", "json"],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertEqual(python_plan, json.loads(completed.stdout))
+        self.assertEqual(python_plan["status"], "pass")
+        self.assertEqual(len(python_plan["segments"]), 1)
+
 
 if __name__ == "__main__":
     unittest.main()

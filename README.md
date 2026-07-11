@@ -78,6 +78,7 @@ import edgefit
 
 report = edgefit.check("model.onnx", "targets/device.yaml")
 reports = edgefit.batch(["a.onnx", "b.onnx"], "targets/device.yaml")
+plan = edgefit.optimize("model.onnx", "targets/virtual-npu.yaml")
 ```
 
 See [Python API](docs/PYTHON_API.md) for the module CLI and binding boundary.
@@ -175,6 +176,7 @@ and [benchmark methodology](docs/COMPETITIVE_BENCHMARK.md).
 
 ```text
 edgefit check             verify a model against a target
+edgefit optimize          estimate and partition an accelerator execution plan
 edgefit target validate   validate a target profile
 edgefit snapshot          freeze a reviewable result
 edgefit diff              block deployment regressions
@@ -186,7 +188,7 @@ in the [CLI contract](docs/CLI_CONTRACT.md).
 ## Architecture
 
 - `crates/edgefit-*` — dependency-light Rust core for IR, target profiles,
-  analysis, policy, reporting, diffs, and CLI orchestration.
+  analysis, policy, hardware planning, reporting, diffs, and CLI orchestration.
 - `tools/onnx-normalize/` — replaceable Python boundary for official ONNX
   checking and shape inference.
 - `tools/competitive-benchmark/` — fixed-corpus evidence runner that preserves
@@ -211,6 +213,7 @@ dependency. See [Architecture](docs/ARCHITECTURE.md) and
 - [CLI contract](docs/CLI_CONTRACT.md)
 - [GitHub Action usage](docs/GITHUB_ACTION_USAGE.md)
 - [Target profiles](docs/TARGET_PROFILES.md)
+- [Hardware optimizer](docs/HARDWARE_OPTIMIZER.md)
 - [Real-world ONNX corpus](docs/REAL_WORLD_CORPUS.md)
 - [Competitive benchmark](docs/COMPETITIVE_BENCHMARK.md)
 - [ESP-DL / ESP32-S3 simulated deployment](docs/SIMULATED_DEPLOYMENT.md)

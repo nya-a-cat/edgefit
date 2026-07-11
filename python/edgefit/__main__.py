@@ -6,7 +6,7 @@ import argparse
 import json
 from pathlib import Path
 
-from .framework import EdgeFitError, check, render
+from .framework import EdgeFitError, check, optimize, render, render_optimization
 
 
 def main() -> int:
@@ -18,11 +18,20 @@ def main() -> int:
     command.add_argument("--format", choices=["text", "json", "markdown", "sarif"], default="text")
     command.add_argument("--out")
     command.add_argument("--suppress", action="append", default=[])
+    optimize_command = subcommands.add_parser("optimize")
+    optimize_command.add_argument("model")
+    optimize_command.add_argument("--target", required=True)
+    optimize_command.add_argument("--format", choices=["json", "markdown"], default="json")
+    optimize_command.add_argument("--out")
     args = parser.parse_args()
 
     try:
-        report = check(args.model, args.target, suppress=args.suppress)
-        output = render(args.model, args.target, format=args.format, suppress=args.suppress)
+        if args.command == "optimize":
+            report = optimize(args.model, args.target)
+            output = render_optimization(args.model, args.target, format=args.format)
+        else:
+            report = check(args.model, args.target, suppress=args.suppress)
+            output = render(args.model, args.target, format=args.format, suppress=args.suppress)
     except (EdgeFitError, OSError) as exc:
         parser.exit(2, f"edgefit: {exc}\n")
 

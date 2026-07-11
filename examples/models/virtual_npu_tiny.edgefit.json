@@ -1,0 +1,37 @@
+{
+  "schema": "edgefit.normalized_model.v1",
+  "model": {
+    "path": "models/virtual_npu_tiny.onnx",
+    "file_bytes": 512,
+    "sha256": "sha256:virtual-npu-tiny"
+  },
+  "graph": {
+    "inputs": [
+      { "name": "x", "dtype": "int8", "shape": [1, 1024] },
+      { "name": "bias", "dtype": "int8", "shape": [1, 1024] }
+    ],
+    "values": [
+      { "name": "sum", "dtype": "int8", "shape": [1, 1024] }
+    ],
+    "outputs": [
+      { "name": "y", "dtype": "int8", "shape": [1, 1024] }
+    ],
+    "initializers": [],
+    "nodes": [
+      {
+        "name": "add_0",
+        "domain": "ai.onnx",
+        "op_type": "Add",
+        "inputs": ["x", "bias"],
+        "outputs": ["sum"]
+      },
+      {
+        "name": "relu_0",
+        "domain": "ai.onnx",
+        "op_type": "Relu",
+        "inputs": ["sum"],
+        "outputs": ["y"]
+      }
+    ]
+  }
+}

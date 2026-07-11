@@ -4,6 +4,7 @@ use edgefit_ir::{
     parse_normalized_model, EdgeFitResult, NormalizedModel,
 };
 use edgefit_policy::{evaluate, suppress_diagnostics};
+use edgefit_optimize::{optimize, render_plan, OptimizationPlan};
 use edgefit_report::{build_report, render_report, Report};
 use edgefit_target::{load_profile, parse_profile, TargetProfile};
 use std::path::{Path, PathBuf};
@@ -90,6 +91,39 @@ pub fn render_adapter_generated_text(
 
 pub fn validate_target_text(target_text: &str, target_source: &str) -> EdgeFitResult<String> {
     parse_target_text(target_text, target_source).map(|profile| profile.target_id)
+}
+
+/// 为规范化模型生成确定性的硬件执行计划，不改写原模型。
+pub fn optimize_model(
+    model_path: impl AsRef<Path>,
+    target_path: impl AsRef<Path>,
+) -> EdgeFitResult<OptimizationPlan> {
+    optimize(&load_normalized_model(model_path)?, &load_profile(target_path)?)
+}
+
+/// 为 CLI 从 ONNX 生成的可信规范化结果生成硬件执行计划。
+pub fn optimize_adapter_generated_model(
+    model_path: impl AsRef<Path>,
+    target_path: impl AsRef<Path>,
+) -> EdgeFitResult<OptimizationPlan> {
+    optimize(&load_cli_adapter_output(model_path)?, &load_profile(target_path)?)
+}
+
+/// 为 Python 框架中的内存模型生成 canonical 优化计划。
+pub fn render_optimization_text(
+    model_text: &str,
+    target_text: &str,
+    target_source: &str,
+    format: &str,
+    adapter_generated: bool,
+) -> EdgeFitResult<String> {
+    let model = if adapter_generated {
+        parse_cli_adapter_output(model_text)?
+    } else {
+        parse_normalized_model(model_text)?
+    };
+    let plan = optimize(&model, &parse_target_text(target_text, target_source)?)?;
+    Ok(render_plan(&plan, format))
 }
 
 fn check_loaded_model(

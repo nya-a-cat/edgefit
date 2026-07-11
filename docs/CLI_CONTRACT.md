@@ -10,6 +10,7 @@ must be able to rely on the behavior below.
 edgefit version
 edgefit target validate <profile>
 edgefit check <model.onnx|model.edgefit.json> --target <profile> [--format text|json|markdown|sarif] [--out path] [--summary path] [--suppress id[,id]]
+edgefit optimize <model.onnx|model.edgefit.json> --target <profile> [--format json|markdown] [--out path]
 edgefit snapshot <model.onnx|model.edgefit.json> --target <profile> --out path
 edgefit diff --old path --new path [--format markdown|json] [--out path]
 ```
@@ -33,6 +34,7 @@ and must not be interpreted as either pass or policy fail.
 
 - JSON report: `edgefit.report.v1`
 - Snapshot: `edgefit.snapshot.v1`
+- Optimization plan: `edgefit.optimization_plan.v1`
 - Snapshot diff: `edgefit.diff.v1`
 - Execution error: `edgefit.execution_error.v1`
 - SARIF: SARIF `2.1.0` with stable EdgeFit diagnostic IDs and logical locations

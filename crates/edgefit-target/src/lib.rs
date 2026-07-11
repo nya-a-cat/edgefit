@@ -21,6 +21,40 @@ pub struct OpRule {
     pub workspace_bytes: u64,
     /// 可被首个输出安全复用的输入索引；未声明时禁止原地复用。
     pub first_output_inplace_input_index: Option<usize>,
+    /// CPU 基线代价；缺失时不得生成总延迟。
+    pub cpu_cost: Option<KernelCost>,
+    /// 可选 NPU kernel 代价；存在时该节点可成为 NPU 分区候选。
+    pub npu_cost: Option<KernelCost>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct KernelCost {
+    pub id: String,
+    pub kind: String,
+    pub fixed_ns: u64,
+    pub throughput_per_second: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AcceleratorProfile {
+    pub id: String,
+    pub confidence: String,
+    pub scratchpad_bytes: u64,
+    pub tensor_alignment_bytes: u64,
+    pub dma_burst_bytes: u64,
+    pub dma_setup_ns: u64,
+    pub dma_read_bytes_per_second: u64,
+    pub dma_write_bytes_per_second: u64,
+    pub spill_allowed: bool,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ReplacementRecipe {
+    pub id: String,
+    pub trusted: bool,
+    pub source: String,
+    pub version: String,
+    pub replacement_ops: Vec<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -73,6 +107,8 @@ pub struct TargetProfile {
     pub fp32_allowed: Option<bool>,
     pub max_opset_versions: BTreeMap<String, u64>,
     pub allowed_ops: BTreeMap<(String, String), OpRule>,
+    pub accelerator: Option<AcceleratorProfile>,
+    pub replacement_recipes: BTreeMap<(String, String), ReplacementRecipe>,
     pub quantization_required: bool,
     pub require_int8: bool,
     pub min_quantized_weight_fraction: Option<f64>,
@@ -238,6 +274,62 @@ impl TargetProfile {
                     ));
                 }
             }
+            for (scope, cost) in [("cpu_cost", &rule.cpu_cost), ("npu_cost", &rule.npu_cost)] {
+                if let Some(cost) = cost {
+                    validate_kernel_cost(domain, op, scope, cost, &mut errors);
+                }
+            }
+        }
+        if let Some(accelerator) = &self.accelerator {
+            if accelerator.id.trim().is_empty() || accelerator.confidence.trim().is_empty() {
+                errors.push("accelerator.id and accelerator.confidence are required".to_string());
+            }
+            if accelerator.scratchpad_bytes == 0 {
+                errors.push("accelerator.scratchpad_bytes must be greater than zero".to_string());
+            }
+            for (name, value) in [
+                ("tensor_alignment_bytes", accelerator.tensor_alignment_bytes),
+                ("dma_burst_bytes", accelerator.dma_burst_bytes),
+            ] {
+                if value == 0 || !value.is_power_of_two() {
+                    errors.push(format!("accelerator.{name} must be a non-zero power of two"));
+                }
+            }
+            if accelerator.dma_read_bytes_per_second == 0
+                || accelerator.dma_write_bytes_per_second == 0
+            {
+                errors.push("accelerator DMA bandwidths must be greater than zero".to_string());
+            }
+        } else if self
+            .allowed_ops
+            .values()
+            .any(|rule| rule.npu_cost.is_some())
+            || !self.replacement_recipes.is_empty()
+        {
+            errors.push("NPU costs and recipes require an accelerator section".to_string());
+        }
+        for ((domain, op), recipe) in &self.replacement_recipes {
+            if !recipe.trusted
+                || recipe.id.trim().is_empty()
+                || recipe.source.trim().is_empty()
+                || recipe.version.trim().is_empty()
+                || recipe.replacement_ops.is_empty()
+            {
+                errors.push(format!(
+                    "recipes.{domain}.{op} requires trusted=true, id, source, version, and replacement_ops"
+                ));
+            }
+            for replacement in &recipe.replacement_ops {
+                if self
+                    .op_rule(domain, replacement)
+                    .and_then(|rule| rule.npu_cost.as_ref())
+                    .is_none()
+                {
+                    errors.push(format!(
+                        "recipes.{domain}.{op} replacement {replacement} requires an NPU cost"
+                    ));
+                }
+            }
         }
         // int8 是量化策略的收窄条件，不能脱离 quantization.required 单独启用。
         if self.require_int8 && !self.quantization_required {
@@ -294,6 +386,23 @@ impl TargetProfile {
     }
 }
 
+fn validate_kernel_cost(
+    domain: &str,
+    op: &str,
+    scope: &str,
+    cost: &KernelCost,
+    errors: &mut Vec<String>,
+) {
+    if cost.id.trim().is_empty() || !matches!(cost.kind.as_str(), "fixed" | "mac" | "element" | "bytes") {
+        errors.push(format!("ops.allow.{domain}.{op}.{scope} requires id and a supported kind"));
+    }
+    if cost.kind != "fixed" && cost.throughput_per_second == 0 {
+        errors.push(format!(
+            "ops.allow.{domain}.{op}.{scope}.throughput_per_second must be greater than zero"
+        ));
+    }
+}
+
 #[derive(Default)]
 struct ParseState {
     section: String,
@@ -302,6 +411,8 @@ struct ParseState {
     current_op: Option<String>,
     op_rule_section: Option<String>,
     shape_symbols: bool,
+    recipe_domain: String,
+    current_recipe_op: Option<String>,
 }
 
 pub fn load_profile(path: impl AsRef<Path>) -> EdgeFitResult<TargetProfile> {
@@ -341,6 +452,16 @@ pub fn parse_profile(text: &str, source: PathBuf) -> EdgeFitResult<TargetProfile
     let mut fp32_allowed = None;
     let mut max_opset_versions = BTreeMap::new();
     let mut allowed_ops = BTreeMap::new();
+    let mut accelerator_id = None;
+    let mut accelerator_confidence = None;
+    let mut accelerator_scratchpad_bytes = None;
+    let mut accelerator_tensor_alignment_bytes = None;
+    let mut accelerator_dma_burst_bytes = None;
+    let mut accelerator_dma_setup_ns = None;
+    let mut accelerator_dma_read_bytes_per_second = None;
+    let mut accelerator_dma_write_bytes_per_second = None;
+    let mut accelerator_spill_allowed = None;
+    let mut replacement_recipes = BTreeMap::new();
     let mut quantization_required = false;
     let mut require_int8 = false;
     let mut min_quantized_weight_fraction = None;
@@ -372,6 +493,8 @@ pub fn parse_profile(text: &str, source: PathBuf) -> EdgeFitResult<TargetProfile
                     | "ops"
                     | "shape"
                     | "quantization"
+                    | "accelerator"
+                    | "recipes"
             ) {
                 return Err(format!("unsupported profile section {key}"));
             }
@@ -381,6 +504,8 @@ pub fn parse_profile(text: &str, source: PathBuf) -> EdgeFitResult<TargetProfile
             state.current_op = None;
             state.op_rule_section = None;
             state.shape_symbols = false;
+            state.recipe_domain.clear();
+            state.current_recipe_op = None;
             if key == "profile_version" {
                 profile_version = clean_scalar(value);
             }
@@ -487,6 +612,40 @@ pub fn parse_profile(text: &str, source: PathBuf) -> EdgeFitResult<TargetProfile
             "quantization" if indent == 2 && key == "min_operator_coverage" => {
                 min_quantized_operator_coverage = Some(parse_f64(value, key)?);
             }
+            "accelerator" if indent == 2 && key == "id" => {
+                accelerator_id = Some(clean_scalar(value));
+            }
+            "accelerator" if indent == 2 && key == "confidence" => {
+                accelerator_confidence = Some(clean_scalar(value));
+            }
+            "accelerator" if indent == 2 && key == "scratchpad_bytes" => {
+                accelerator_scratchpad_bytes = parse_u64(value, key)?;
+            }
+            "accelerator" if indent == 2 && key == "tensor_alignment_bytes" => {
+                accelerator_tensor_alignment_bytes = parse_u64(value, key)?;
+            }
+            "accelerator" if indent == 2 && key == "dma_burst_bytes" => {
+                accelerator_dma_burst_bytes = parse_u64(value, key)?;
+            }
+            "accelerator" if indent == 2 && key == "dma_setup_ns" => {
+                accelerator_dma_setup_ns = parse_u64(value, key)?;
+            }
+            "accelerator" if indent == 2 && key == "dma_read_bytes_per_second" => {
+                accelerator_dma_read_bytes_per_second = parse_u64(value, key)?;
+            }
+            "accelerator" if indent == 2 && key == "dma_write_bytes_per_second" => {
+                accelerator_dma_write_bytes_per_second = parse_u64(value, key)?;
+            }
+            "accelerator" if indent == 2 && key == "spill_allowed" => {
+                accelerator_spill_allowed = Some(parse_bool(value, key)?);
+            }
+            "recipes" => parse_recipe_line(
+                &mut state,
+                &mut replacement_recipes,
+                indent,
+                key,
+                value,
+            )?,
             "ops" => parse_ops_line(&mut state, &mut allowed_ops, indent, key, value)?,
             _ => {
                 return Err(format!(
@@ -500,6 +659,21 @@ pub fn parse_profile(text: &str, source: PathBuf) -> EdgeFitResult<TargetProfile
     if profile_version != "edgefit.target.v1" {
         return Err("profile_version must be edgefit.target.v1".to_string());
     }
+
+    let accelerator = match accelerator_id {
+        Some(id) => Some(AcceleratorProfile {
+            id,
+            confidence: accelerator_confidence.unwrap_or_default(),
+            scratchpad_bytes: accelerator_scratchpad_bytes.unwrap_or(0),
+            tensor_alignment_bytes: accelerator_tensor_alignment_bytes.unwrap_or(0),
+            dma_burst_bytes: accelerator_dma_burst_bytes.unwrap_or(0),
+            dma_setup_ns: accelerator_dma_setup_ns.unwrap_or(0),
+            dma_read_bytes_per_second: accelerator_dma_read_bytes_per_second.unwrap_or(0),
+            dma_write_bytes_per_second: accelerator_dma_write_bytes_per_second.unwrap_or(0),
+            spill_allowed: accelerator_spill_allowed.unwrap_or(false),
+        }),
+        None => None,
+    };
 
     Ok(TargetProfile {
         source,
@@ -526,6 +700,8 @@ pub fn parse_profile(text: &str, source: PathBuf) -> EdgeFitResult<TargetProfile
         fp32_allowed,
         max_opset_versions,
         allowed_ops,
+        accelerator,
+        replacement_recipes,
         quantization_required,
         require_int8,
         min_quantized_weight_fraction,
@@ -566,6 +742,8 @@ fn parse_ops_line(
                     max_rank: None,
                     workspace_bytes: 0,
                     first_output_inplace_input_index: None,
+                    cpu_cost: None,
+                    npu_cost: None,
                 });
         }
         8 => {
@@ -598,8 +776,14 @@ fn parse_ops_line(
                         })?,
                     );
                 }
-                "input_dtypes" | "output_dtypes" | "attributes" if value.is_empty() => {
+                "input_dtypes" | "output_dtypes" | "attributes" | "cpu_cost" | "npu_cost"
+                    if value.is_empty() => {
                     state.op_rule_section = Some(key.to_string());
+                    if key == "cpu_cost" {
+                        rule.cpu_cost = Some(KernelCost::default());
+                    } else if key == "npu_cost" {
+                        rule.npu_cost = Some(KernelCost::default());
+                    }
                 }
                 _ => return Err(format!("unsupported operator rule field {key}")),
             }
@@ -632,12 +816,76 @@ fn parse_ops_line(
                         return Err(format!("duplicate operator attribute constraint {key}"));
                     }
                 }
+                Some("cpu_cost") => {
+                    parse_kernel_cost_field(rule.cpu_cost.as_mut(), key, value)?;
+                }
+                Some("npu_cost") => {
+                    parse_kernel_cost_field(rule.npu_cost.as_mut(), key, value)?;
+                }
                 _ => return Err(format!(
                     "unsupported operator contract field {key} at indentation {indent}"
                 )),
             }
         }
         _ => return Err(format!("unsupported ops field {key} at indentation {indent}")),
+    }
+    Ok(())
+}
+
+fn parse_kernel_cost_field(
+    cost: Option<&mut KernelCost>,
+    key: &str,
+    value: &str,
+) -> EdgeFitResult<()> {
+    let cost = cost.ok_or("kernel cost section was not initialized")?;
+    match key {
+        "id" => cost.id = clean_scalar(value),
+        "kind" => cost.kind = clean_scalar(value),
+        "fixed_ns" => {
+            cost.fixed_ns = parse_u64(value, key)?.ok_or("kernel fixed_ns requires an integer")?;
+        }
+        "throughput_per_second" => {
+            cost.throughput_per_second = parse_u64(value, key)?
+                .ok_or("kernel throughput_per_second requires an integer")?;
+        }
+        _ => return Err(format!("unsupported kernel cost field {key}")),
+    }
+    Ok(())
+}
+
+fn parse_recipe_line(
+    state: &mut ParseState,
+    recipes: &mut BTreeMap<(String, String), ReplacementRecipe>,
+    indent: usize,
+    key: &str,
+    value: &str,
+) -> EdgeFitResult<()> {
+    match indent {
+        2 => state.recipe_domain = key.to_string(),
+        4 if !state.recipe_domain.is_empty() => {
+            state.current_recipe_op = Some(key.to_string());
+            recipes
+                .entry((state.recipe_domain.clone(), key.to_string()))
+                .or_default();
+        }
+        6 => {
+            let op = state
+                .current_recipe_op
+                .clone()
+                .ok_or("recipe field without operator")?;
+            let recipe = recipes
+                .get_mut(&(state.recipe_domain.clone(), op))
+                .ok_or("recipe was not initialized")?;
+            match key {
+                "id" => recipe.id = clean_scalar(value),
+                "trusted" => recipe.trusted = parse_bool(value, key)?,
+                "source" => recipe.source = clean_scalar(value),
+                "version" => recipe.version = clean_scalar(value),
+                "replacement_ops" => recipe.replacement_ops = parse_list(value),
+                _ => return Err(format!("unsupported recipe field {key}")),
+            }
+        }
+        _ => return Err(format!("unsupported recipes field {key} at indentation {indent}")),
     }
     Ok(())
 }
@@ -1065,5 +1313,35 @@ ops:
         let profile = parse_profile(text, PathBuf::from("target.yaml")).unwrap();
         let error = profile.validate().unwrap_err();
         assert!(error.contains("dtypes"));
+    }
+
+    #[test]
+    fn parses_virtual_accelerator_costs_and_trusted_recipes() {
+        let profile = parse_profile(
+            include_str!("../../../targets/virtual-npu.yaml"),
+            PathBuf::from("targets/virtual-npu.yaml"),
+        )
+        .unwrap();
+
+        profile.validate().unwrap();
+        assert_eq!(profile.accelerator.as_ref().unwrap().dma_burst_bytes, 64);
+        assert_eq!(
+            profile
+                .op_rule("ai.onnx", "Add")
+                .unwrap()
+                .npu_cost
+                .as_ref()
+                .unwrap()
+                .id,
+            "npu.add.int8"
+        );
+        assert_eq!(
+            profile
+                .replacement_recipes
+                .get(&("ai.onnx".to_string(), "HardSwish".to_string()))
+                .unwrap()
+                .replacement_ops,
+            ["HardSigmoid", "Mul"]
+        );
     }
 }

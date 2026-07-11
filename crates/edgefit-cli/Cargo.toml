@@ -13,5 +13,6 @@ path = "src/main.rs"
 edgefit-core = { path = "../edgefit-core" }
 edgefit-diff = { path = "../edgefit-diff" }
 edgefit-ir = { path = "../edgefit-ir" }
+edgefit-optimize = { path = "../edgefit-optimize" }
 edgefit-report = { path = "../edgefit-report" }
 edgefit-target = { path = "../edgefit-target" }

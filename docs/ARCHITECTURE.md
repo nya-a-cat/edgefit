@@ -16,6 +16,8 @@ Rust core + replaceable ONNX adapter + independent report layer.
 - `edgefit-report`: text, JSON, Markdown, and SARIF renderers with diagnostic locations.
 - `edgefit-diff`: snapshot comparison for PR regression checks, including
   active-versus-suppressed diagnostic state changes.
+- `edgefit-optimize`: deterministic kernel selection, contiguous NPU
+  partitioning, and alignment/DMA/spill simulation.
 - `edgefit-cli`: command-line entrypoint.
 - `python/edgefit`: Python orchestration, ONNX entry, explicit profile loading,
   batch execution, and report handling over the same Rust engine.
@@ -86,5 +88,6 @@ The policy surfaces that separately from incomplete activation metadata.
 
 ## Product Boundary
 
-The MVP is a deployment-budget verifier and CI gate. It does not implement a
-runtime, compiler, latency predictor, web dashboard, or automatic fixer.
+EdgeFit does not implement a runtime, compiler, web dashboard, or automatic
+model rewriter. Its optimizer is a profile-driven static estimator and plan
+generator; seed costs must not be presented as measured device latency.
