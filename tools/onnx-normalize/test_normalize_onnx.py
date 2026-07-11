@@ -37,7 +37,46 @@ class NormalizeOnnxTests(unittest.TestCase):
 
         self.assertEqual(data["schema"], "edgefit.normalized_model.v1")
         self.assertEqual(data["graph"]["nodes"][0]["op_type"], "Add")
+        self.assertEqual(data["graph"]["nodes"][0]["attributes"], {})
         json.dumps(data)
+
+    @unittest.skipIf(importlib.util.find_spec("onnx") is None, "onnx package is not installed")
+    def test_normalizes_stable_attribute_subset_and_preserves_unknown_evidence(self) -> None:
+        import onnx
+        from onnx import helper
+
+        module_path = Path(__file__).with_name("normalize_onnx.py")
+        spec = importlib.util.spec_from_file_location("normalize_onnx", module_path)
+        module = importlib.util.module_from_spec(spec)
+        assert spec and spec.loader
+        spec.loader.exec_module(module)
+
+        node = helper.make_node(
+            "Example",
+            [],
+            [],
+            axis=1,
+            alpha=0.5,
+            label="edge",
+            axes=[1, 2],
+            scales=[0.5, 1.0],
+            labels=["a", "b"],
+        )
+        # TENSOR 尚未进入兼容性语义，必须作为 unknown 证据输出而不是丢弃。
+        node.attribute.extend(
+            [helper.make_attribute("weights", helper.make_tensor("w", 1, [1], [1.0]))]
+        )
+
+        attributes = module.node_info(node, onnx.AttributeProto)["attributes"]
+
+        self.assertEqual(attributes["axis"], {"kind": "int", "value": "1"})
+        self.assertEqual(attributes["alpha"], {"kind": "float", "value": 0.5})
+        self.assertEqual(attributes["label"], {"kind": "string", "value": "edge"})
+        self.assertEqual(attributes["axes"], {"kind": "ints", "value": ["1", "2"]})
+        self.assertEqual(attributes["scales"], {"kind": "floats", "value": [0.5, 1.0]})
+        self.assertEqual(attributes["labels"], {"kind": "strings", "value": ["a", "b"]})
+        self.assertEqual(attributes["weights"]["kind"], "unknown")
+        self.assertEqual(attributes["weights"]["onnx_type"], onnx.AttributeProto.TENSOR)
 
     @unittest.skipIf(importlib.util.find_spec("onnx") is None, "onnx package is not installed")
     def test_undefined_dtype_maps_to_none(self) -> None:

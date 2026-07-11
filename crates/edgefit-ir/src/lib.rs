@@ -127,6 +127,31 @@ impl TensorInfo {
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct FloatAttribute(u64);
+
+impl FloatAttribute {
+    pub fn from_f64(value: f64) -> Self {
+        Self(value.to_bits())
+    }
+
+    pub fn as_f64(&self) -> f64 {
+        f64::from_bits(self.0)
+    }
+}
+
+/// ONNX 节点属性的稳定子集；Unknown 保留未建模类型，禁止静默视为兼容。
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum AttributeValue {
+    Int(i64),
+    Float(FloatAttribute),
+    String(String),
+    Ints(Vec<i64>),
+    Floats(Vec<FloatAttribute>),
+    Strings(Vec<String>),
+    Unknown { onnx_type: i64, reason: String },
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct NodeInfo {
     pub name: Option<String>,
@@ -134,6 +159,7 @@ pub struct NodeInfo {
     pub op_type: String,
     pub inputs: Vec<String>,
     pub outputs: Vec<String>,
+    pub attributes: BTreeMap<String, AttributeValue>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -373,7 +399,53 @@ fn parse_node(value: &JsonValue) -> EdgeFitResult<NodeInfo> {
         op_type: required_string(obj, "op_type")?,
         inputs: required_string_array_field(obj, "inputs")?,
         outputs: required_string_array_field(obj, "outputs")?,
+        attributes: parse_attributes(obj)?,
     })
+}
+
+fn parse_attributes(
+    node: &BTreeMap<String, JsonValue>,
+) -> EdgeFitResult<BTreeMap<String, AttributeValue>> {
+    // v1 历史文件没有 attributes；缺失时按空集合读取，保持向后兼容。
+    let Some(attributes) = node.get("attributes") else {
+        return Ok(BTreeMap::new());
+    };
+    let attributes = attributes
+        .as_object()
+        .ok_or("node attributes must be a JSON object")?;
+    attributes
+        .iter()
+        .map(|(name, value)| Ok((name.clone(), parse_attribute(value)?)))
+        .collect()
+}
+
+fn parse_attribute(value: &JsonValue) -> EdgeFitResult<AttributeValue> {
+    let attribute = object_field_from_value(value)?;
+    let kind = required_string(attribute, "kind")?;
+    match kind.as_str() {
+        "int" => Ok(AttributeValue::Int(required_decimal_i64(attribute, "value")?)),
+        "float" => Ok(AttributeValue::Float(FloatAttribute::from_f64(
+            required_number(attribute, "value")?,
+        ))),
+        "string" => Ok(AttributeValue::String(required_string(attribute, "value")?)),
+        "ints" => Ok(AttributeValue::Ints(required_decimal_i64_array(
+            attribute, "value",
+        )?)),
+        "floats" => Ok(AttributeValue::Floats(
+            required_number_array(attribute, "value")?
+                .into_iter()
+                .map(FloatAttribute::from_f64)
+                .collect(),
+        )),
+        "strings" => Ok(AttributeValue::Strings(required_string_array_field(
+            attribute, "value",
+        )?)),
+        "unknown" => Ok(AttributeValue::Unknown {
+            onnx_type: required_i64(attribute, "onnx_type")?,
+            reason: required_string(attribute, "reason")?,
+        }),
+        _ => Err(format!("unsupported node attribute kind {kind}")),
+    }
 }
 
 fn parse_opset_versions(
@@ -482,6 +554,54 @@ fn number_field(obj: &BTreeMap<String, JsonValue>, key: &str) -> Option<u64> {
 
 fn required_u64(obj: &BTreeMap<String, JsonValue>, key: &str) -> EdgeFitResult<u64> {
     number_field(obj, key).ok_or_else(|| format!("missing non-negative integer field {key}"))
+}
+
+fn required_i64(obj: &BTreeMap<String, JsonValue>, key: &str) -> EdgeFitResult<i64> {
+    obj.get(key)
+        .and_then(JsonValue::as_i64)
+        .ok_or_else(|| format!("missing integer field {key}"))
+}
+
+fn required_decimal_i64(obj: &BTreeMap<String, JsonValue>, key: &str) -> EdgeFitResult<i64> {
+    required_string(obj, key)?
+        .parse::<i64>()
+        .map_err(|_| format!("field {key} must be a decimal int64 string"))
+}
+
+fn required_number(obj: &BTreeMap<String, JsonValue>, key: &str) -> EdgeFitResult<f64> {
+    match obj.get(key) {
+        Some(JsonValue::Number(value)) if value.is_finite() => Ok(*value),
+        _ => Err(format!("missing finite number field {key}")),
+    }
+}
+
+fn required_decimal_i64_array(
+    obj: &BTreeMap<String, JsonValue>,
+    key: &str,
+) -> EdgeFitResult<Vec<i64>> {
+    required_array_field(obj, key)?
+        .iter()
+        .map(|value| {
+            value
+                .as_str()
+                .ok_or_else(|| format!("{key} must contain only decimal int64 strings"))?
+                .parse::<i64>()
+                .map_err(|_| format!("{key} must contain only decimal int64 strings"))
+        })
+        .collect()
+}
+
+fn required_number_array(
+    obj: &BTreeMap<String, JsonValue>,
+    key: &str,
+) -> EdgeFitResult<Vec<f64>> {
+    required_array_field(obj, key)?
+        .iter()
+        .map(|value| match value {
+            JsonValue::Number(number) if number.is_finite() => Ok(*number),
+            _ => Err(format!("{key} must contain only finite numbers")),
+        })
+        .collect()
 }
 
 fn shape_field(obj: &BTreeMap<String, JsonValue>, key: &str) -> EdgeFitResult<Option<Vec<Dim>>> {
@@ -713,5 +833,41 @@ mod tests {
             Some("edgefit.normalized_model.v1")
         );
         assert_eq!(obj.get("n").and_then(JsonValue::as_i64), Some(2));
+    }
+
+    #[test]
+    fn node_attributes_are_optional_for_historical_v1_models() {
+        let node = parse_json(
+            r#"{"name":null,"domain":"ai.onnx","op_type":"Relu","inputs":["x"],"outputs":["y"]}"#,
+        )
+        .unwrap();
+
+        assert!(parse_node(&node).unwrap().attributes.is_empty());
+    }
+
+    #[test]
+    fn parses_typed_and_unknown_node_attributes() {
+        let node = parse_json(
+            r#"{"domain":"ai.onnx","op_type":"Example","inputs":[],"outputs":[],"attributes":{"axis":{"kind":"int","value":"1"},"alpha":{"kind":"float","value":0.5},"labels":{"kind":"strings","value":["a","b"]},"tensor":{"kind":"unknown","onnx_type":4,"reason":"unmodeled_attribute_type"}}}"#,
+        )
+        .unwrap();
+        let attributes = parse_node(&node).unwrap().attributes;
+
+        assert_eq!(attributes.get("axis"), Some(&AttributeValue::Int(1)));
+        assert_eq!(
+            attributes.get("alpha"),
+            Some(&AttributeValue::Float(FloatAttribute::from_f64(0.5)))
+        );
+        assert_eq!(
+            attributes.get("labels"),
+            Some(&AttributeValue::Strings(vec!["a".to_string(), "b".to_string()]))
+        );
+        assert_eq!(
+            attributes.get("tensor"),
+            Some(&AttributeValue::Unknown {
+                onnx_type: 4,
+                reason: "unmodeled_attribute_type".to_string(),
+            })
+        );
     }
 }

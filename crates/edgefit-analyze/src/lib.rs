@@ -487,7 +487,21 @@ fn op_dtype_violations(model: &NormalizedModel, profile: &TargetProfile) -> Vec<
         if rule.dtypes.is_empty() {
             continue;
         }
-        for tensor_name in node.inputs.iter().chain(node.outputs.iter()) {
+        let tensors = node
+            .inputs
+            .iter()
+            .enumerate()
+            .filter(|(port, _)| !rule.input_dtypes.contains_key(port))
+            .map(|(_, tensor)| tensor)
+            .chain(
+                node.outputs
+                    .iter()
+                    .enumerate()
+                    .filter(|(port, _)| !rule.output_dtypes.contains_key(port))
+                    .map(|(_, tensor)| tensor),
+            );
+        // 逐端口合同由 EF0207 单独报告；聚合规则只覆盖没有专门合同的端口。
+        for tensor_name in tensors {
             let Some(tensor) = model.tensors.get(tensor_name) else {
                 continue;
             };
@@ -641,6 +655,7 @@ mod tests {
                 op_type: "Relu".to_string(),
                 inputs: vec!["x".to_string()],
                 outputs: vec!["y".to_string()],
+                attributes: BTreeMap::new(),
             }],
         };
         let (peak, confidence, _, _) = estimate_peak_activation(&model, &BTreeMap::new());
@@ -668,6 +683,7 @@ mod tests {
                 op_type: "Resize".to_string(),
                 inputs: vec![],
                 outputs: vec![],
+                attributes: BTreeMap::new(),
             }],
         };
         let mut allowed_ops = BTreeMap::new();
@@ -675,6 +691,9 @@ mod tests {
             ("ai.onnx".to_string(), "Relu".to_string()),
             OpRule {
                 dtypes: BTreeSet::from(["int8".to_string()]),
+                input_dtypes: BTreeMap::new(),
+                output_dtypes: BTreeMap::new(),
+                attributes: BTreeMap::new(),
                 max_rank: None,
                 workspace_bytes: 0,
                 first_output_inplace_input_index: None,
@@ -721,6 +740,7 @@ mod tests {
                 op_type: "Conv".to_string(),
                 inputs: vec!["x".to_string()],
                 outputs: vec!["x".to_string()],
+                attributes: BTreeMap::new(),
             }],
         };
         let mut allowed_ops = BTreeMap::new();
@@ -728,6 +748,9 @@ mod tests {
             ("ai.onnx".to_string(), "Conv".to_string()),
             OpRule {
                 dtypes: BTreeSet::from(["int8".to_string()]),
+                input_dtypes: BTreeMap::new(),
+                output_dtypes: BTreeMap::new(),
+                attributes: BTreeMap::new(),
                 max_rank: Some(4),
                 workspace_bytes: 0,
                 first_output_inplace_input_index: None,
@@ -775,6 +798,7 @@ mod tests {
                     op_type: "Relu".to_string(),
                     inputs: vec!["x".to_string()],
                     outputs: vec!["y".to_string()],
+                    attributes: BTreeMap::new(),
                 },
                 NodeInfo {
                     name: Some("second".to_string()),
@@ -782,6 +806,7 @@ mod tests {
                     op_type: "Relu".to_string(),
                     inputs: vec!["y".to_string(), "y".to_string()],
                     outputs: vec!["z".to_string()],
+                    attributes: BTreeMap::new(),
                 },
             ],
         };
@@ -789,6 +814,9 @@ mod tests {
             ("ai.onnx".to_string(), "Relu".to_string()),
             OpRule {
                 dtypes: BTreeSet::from(["int8".to_string()]),
+                input_dtypes: BTreeMap::new(),
+                output_dtypes: BTreeMap::new(),
+                attributes: BTreeMap::new(),
                 max_rank: None,
                 workspace_bytes: 8,
                 first_output_inplace_input_index: Some(0),

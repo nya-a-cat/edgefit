@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 from pathlib import Path
 from typing import Any
 
@@ -77,7 +78,7 @@ def normalize(path: Path) -> dict[str, Any]:
             "values": [value_info(item, TensorProto) for item in graph.value_info],
             "outputs": [value_info(item, TensorProto) for item in graph.output],
             "initializers": [initializer_info(item, TensorProto) for item in graph.initializer],
-            "nodes": [node_info(item) for item in graph.node],
+            "nodes": [node_info(item, onnx.AttributeProto) for item in graph.node],
         },
     }
 
@@ -144,14 +145,60 @@ def initializer_info(value: Any, tensor_proto: Any) -> dict[str, Any]:
     return item
 
 
-def node_info(node: Any) -> dict[str, Any]:
+def node_info(node: Any, attribute_proto: Any) -> dict[str, Any]:
     return {
         "name": node.name or None,
         "domain": node.domain or "ai.onnx",
         "op_type": node.op_type,
         "inputs": list(node.input),
         "outputs": list(node.output),
+        "attributes": {
+            attribute.name: attribute_info(attribute, attribute_proto)
+            for attribute in node.attribute
+        },
     }
+
+
+def attribute_info(attribute: Any, attribute_proto: Any) -> dict[str, Any]:
+    """将可稳定比较的 ONNX 属性编码为带类型值，未知类型必须保留证据。"""
+    attribute_type = attribute.type
+    if attribute_type == attribute_proto.FLOAT:
+        value = float(attribute.f)
+        if not math.isfinite(value):
+            return unknown_attribute(attribute_type, "non_finite_float")
+        return {"kind": "float", "value": value}
+    if attribute_type == attribute_proto.INT:
+        # 十进制字符串避免 JSON number 经 f64 解析时丢失完整 int64 精度。
+        return {"kind": "int", "value": str(int(attribute.i))}
+    if attribute_type == attribute_proto.STRING:
+        return string_attribute(attribute.s, attribute_type)
+    if attribute_type == attribute_proto.FLOATS:
+        values = [float(value) for value in attribute.floats]
+        if not all(math.isfinite(value) for value in values):
+            return unknown_attribute(attribute_type, "non_finite_float")
+        return {"kind": "floats", "value": values}
+    if attribute_type == attribute_proto.INTS:
+        return {"kind": "ints", "value": [str(int(value)) for value in attribute.ints]}
+    if attribute_type == attribute_proto.STRINGS:
+        try:
+            values = [value.decode("utf-8") for value in attribute.strings]
+        except UnicodeDecodeError:
+            return unknown_attribute(attribute_type, "non_utf8_string")
+        return {"kind": "strings", "value": values}
+    return unknown_attribute(attribute_type, "unmodeled_attribute_type")
+
+
+def string_attribute(value: bytes, attribute_type: int) -> dict[str, Any]:
+    """仅将有效 UTF-8 暴露为字符串；二进制内容不可伪装成兼容属性。"""
+    try:
+        decoded = value.decode("utf-8")
+    except UnicodeDecodeError:
+        return unknown_attribute(attribute_type, "non_utf8_string")
+    return {"kind": "string", "value": decoded}
+
+
+def unknown_attribute(attribute_type: int, reason: str) -> dict[str, Any]:
+    return {"kind": "unknown", "onnx_type": int(attribute_type), "reason": reason}
 
 
 def dim_value(dim: Any) -> int | str | None:
