@@ -32,6 +32,9 @@ Do not use `git add -f` to bypass these release boundaries.
   dispatch without publishing a release.
 - A matching `v<workspace-version>` tag is required before the same workflow
   can create a GitHub Release.
+- A workspace version containing a SemVer prerelease suffix, such as
+  `0.2.0-alpha.1`, is published as a GitHub prerelease; versions without a
+  suffix are published as regular releases.
 - Release archives are checksum-protected but currently unsigned and are not
   Apple-notarized.
 - Local compilation and tests are not part of the public publishing procedure;

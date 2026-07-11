@@ -145,4 +145,14 @@ jobs:
       - name: Publish GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" dist/* --verify-tag --generate-notes --title "EdgeFit $GITHUB_REF_NAME"
+        shell: bash
+        run: |
+          release_flags=()
+          if [[ "${GITHUB_REF_NAME#v}" == *-* ]]; then
+            release_flags+=(--prerelease)
+          fi
+          gh release create "$GITHUB_REF_NAME" dist/* \
+            --verify-tag \
+            --generate-notes \
+            --title "EdgeFit $GITHUB_REF_NAME" \
+            "${release_flags[@]}"
