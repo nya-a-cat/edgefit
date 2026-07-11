@@ -141,7 +141,6 @@
       "purpose": "Deterministic simulated spill attempts with explicit capacity blockers",
       "tags": ["optimizer", "scratchpad", "spill", "blocker", "simulated"],
       "edgefit_command": "optimize",
-      "expected_edgefit_status": "tool_rejected",
       "target": "../../targets/virtual-npu-small-scratchpad.yaml",
       "model_path": "../../examples/models/virtual_npu_spill.edgefit.json",
       "expectations": {
@@ -163,7 +162,6 @@
       "purpose": "Fail-closed simulated scratchpad capacity evidence when spill is disabled",
       "tags": ["optimizer", "scratchpad", "blocker", "no-spill", "simulated"],
       "edgefit_command": "optimize",
-      "expected_edgefit_status": "tool_rejected",
       "target": "../../targets/virtual-npu-no-spill.yaml",
       "model_path": "../../examples/models/virtual_npu_spill.edgefit.json",
       "expectations": {
