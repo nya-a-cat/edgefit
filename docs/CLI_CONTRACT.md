@@ -34,6 +34,7 @@ and must not be interpreted as either pass or policy fail.
 - JSON report: `edgefit.report.v1`
 - Snapshot: `edgefit.snapshot.v1`
 - Snapshot diff: `edgefit.diff.v1`
+- Execution error: `edgefit.execution_error.v1`
 - SARIF: SARIF `2.1.0` with stable EdgeFit diagnostic IDs and logical locations
 
 Within a `v1` schema, fields may be added but existing fields cannot be removed,
@@ -42,6 +43,15 @@ unknown fields and use the schema identifier before reading a document.
 
 Legacy `edgefit.report.v1` input remains accepted by the diff loader for
 snapshots produced before the dedicated snapshot schema existed.
+
+When direct ONNX normalization or adapter-backed analysis cannot produce a
+trustworthy result, `check` and `snapshot` exit with code `2`. If `--out` was
+provided with `--format json`, `--format markdown`, or `--format sarif`, EdgeFit
+writes `edgefit.execution_error.v1` instead of leaving that evidence path empty.
+Text output retains its human-readable CLI error form. A requested `--summary`
+receives the corresponding Markdown execution-error document. Argument parsing
+and validation failures do not create execution artifacts. These artifacts record
+an execution failure and must never be interpreted as a normal report or snapshot.
 
 ## Compatibility Gate
 

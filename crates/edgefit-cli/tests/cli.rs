@@ -239,6 +239,11 @@ fn check_suppresses_accepted_diagnostics_by_id() {
 fn onnx_input_dispatches_to_adapter() {
     let dir = unique_dir("onnx-dispatch");
     let model = dir.join("invalid.onnx");
+    let json_path = dir.join("execution-error.json");
+    let summary_path = dir.join("execution-error.md");
+    let sarif_path = dir.join("execution-error.sarif");
+    let text_path = dir.join("execution-error.txt");
+    let snapshot_path = dir.join("execution-error-snapshot.json");
     fs::write(&model, b"not an onnx model").expect("write invalid onnx");
 
     let output = run(&[
@@ -246,10 +251,88 @@ fn onnx_input_dispatches_to_adapter() {
         model.to_str().expect("onnx path"),
         "--target",
         &fixture("targets/esp32s3.yaml"),
+        "--format",
+        "json",
+        "--out",
+        json_path.to_str().expect("json path"),
+        "--summary",
+        summary_path.to_str().expect("summary path"),
     ]);
     assert_eq!(output.status.code(), Some(2));
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("ONNX adapter failed") || stderr.contains("onnx is required"));
+    let json = fs::read_to_string(&json_path).expect("execution error json");
+    assert!(json.contains("\"schema\": \"edgefit.execution_error.v1\""));
+    assert!(json.contains("\"status\": \"execution_error\""));
+    parse_json(&json).expect("parse execution error json");
+    let summary = fs::read_to_string(&summary_path).expect("execution error summary");
+    assert!(summary.contains("# EdgeFit Execution Error"));
+    assert!(summary.contains("edgefit.execution_error.v1"));
+
+    let sarif_output = run(&[
+        "check",
+        model.to_str().expect("onnx path"),
+        "--target",
+        &fixture("targets/esp32s3.yaml"),
+        "--format",
+        "sarif",
+        "--out",
+        sarif_path.to_str().expect("sarif path"),
+    ]);
+    assert_eq!(sarif_output.status.code(), Some(2));
+    let sarif = fs::read_to_string(&sarif_path).expect("execution error sarif");
+    assert!(sarif.contains("\"version\": \"2.1.0\""));
+    assert!(sarif.contains("edgefit.execution_error.v1"));
+    assert!(sarif.contains("EFEXECUTION"));
+    parse_json(&sarif).expect("parse execution error sarif");
+
+    let text_output = run(&[
+        "check",
+        model.to_str().expect("onnx path"),
+        "--target",
+        &fixture("targets/esp32s3.yaml"),
+        "--out",
+        text_path.to_str().expect("text path"),
+    ]);
+    assert_eq!(text_output.status.code(), Some(2));
+    let text = fs::read_to_string(&text_path).expect("execution error text");
+    assert!(text.starts_with("EdgeFit execution error:"));
+    assert!(!text.contains("edgefit.execution_error.v1"));
+
+    let snapshot_output = run(&[
+        "snapshot",
+        model.to_str().expect("onnx path"),
+        "--target",
+        &fixture("targets/esp32s3.yaml"),
+        "--out",
+        snapshot_path.to_str().expect("snapshot path"),
+    ]);
+    assert_eq!(snapshot_output.status.code(), Some(2));
+    let snapshot = fs::read_to_string(&snapshot_path).expect("snapshot execution error");
+    assert!(snapshot.contains("\"schema\": \"edgefit.execution_error.v1\""));
+    parse_json(&snapshot).expect("parse snapshot execution error");
+
+    fs::remove_dir_all(dir).expect("cleanup temp dir");
+}
+
+#[test]
+fn onnx_argument_error_does_not_write_execution_artifact() {
+    let dir = unique_dir("onnx-argument-error");
+    let model = dir.join("invalid.onnx");
+    let report = dir.join("must-not-exist.json");
+    fs::write(&model, b"not an onnx model").expect("write invalid onnx");
+
+    let output = run(&[
+        "check",
+        model.to_str().expect("onnx path"),
+        "--format",
+        "json",
+        "--out",
+        report.to_str().expect("report path"),
+    ]);
+    assert_eq!(output.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&output.stderr).contains("--target is required"));
+    assert!(!report.exists());
 
     fs::remove_dir_all(dir).expect("cleanup temp dir");
 }

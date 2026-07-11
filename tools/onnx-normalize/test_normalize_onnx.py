@@ -51,5 +51,34 @@ class NormalizeOnnxTests(unittest.TestCase):
 
         self.assertIsNone(module.dtype_name(TensorProto.UNDEFINED, TensorProto))
 
+    @unittest.skipIf(importlib.util.find_spec("onnx") is None, "onnx package is not installed")
+    def test_rejects_loop_with_nested_body_graph(self) -> None:
+        import onnx
+        from onnx import TensorProto, helper
+
+        module_path = Path(__file__).with_name("normalize_onnx.py")
+        spec = importlib.util.spec_from_file_location("normalize_onnx", module_path)
+        module = importlib.util.module_from_spec(spec)
+        assert spec and spec.loader
+        spec.loader.exec_module(module)
+
+        iteration = helper.make_tensor_value_info("iteration", TensorProto.INT64, [])
+        condition_in = helper.make_tensor_value_info("condition_in", TensorProto.BOOL, [])
+        condition_out = helper.make_tensor_value_info("condition_out", TensorProto.BOOL, [])
+        body = helper.make_graph(
+            [helper.make_node("Identity", ["condition_in"], ["condition_out"])],
+            "loop_body",
+            [iteration, condition_in],
+            [condition_out],
+        )
+        trip_count = helper.make_tensor_value_info("trip_count", TensorProto.INT64, [])
+        condition = helper.make_tensor_value_info("condition", TensorProto.BOOL, [])
+        loop = helper.make_node("Loop", ["trip_count", "condition"], [], body=body)
+        graph = helper.make_graph([loop], "nested_loop", [trip_count, condition], [])
+        model = helper.make_model(graph)
+
+        with self.assertRaisesRegex(ValueError, "nested ONNX subgraphs are not supported"):
+            module.ensure_supported_graph(model, onnx.AttributeProto)
+
 if __name__ == "__main__":
     unittest.main()
