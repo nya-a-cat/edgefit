@@ -17,7 +17,7 @@ const EXIT_PASS: i32 = 0;
 const EXIT_POLICY_FAIL: i32 = 1;
 const EXIT_USAGE_ERROR: i32 = 2;
 const EMBEDDED_ONNX_ADAPTER: &str =
-    include_str!("../../../tools/onnx-normalize/normalize_onnx.py");
+    include_str!("../../../python/edgefit/onnx_adapter.py");
 
 fn main() {
     let code = match run(env::args().skip(1).collect()) {

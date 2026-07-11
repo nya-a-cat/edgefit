@@ -9,6 +9,7 @@ members = [
   "crates/edgefit-report",
   "crates/edgefit-target",
 ]
+exclude = ["python/native"]
 resolver = "2"
 
 [workspace.package]

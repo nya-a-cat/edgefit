@@ -1,0 +1,16 @@
+[build-system]
+requires = ["maturin==1.9.4"]
+build-backend = "maturin"
+
+[project]
+name = "edgefit"
+version = "0.2.0a3"
+description = "Python orchestration framework for the EdgeFit Rust analysis engine"
+requires-python = ">=3.10"
+license = "MIT"
+dependencies = ["onnx==1.22.0"]
+
+[tool.maturin]
+manifest-path = "native/Cargo.toml"
+python-source = "."
+module-name = "edgefit._native"

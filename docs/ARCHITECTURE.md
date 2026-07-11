@@ -17,6 +17,9 @@ Rust core + replaceable ONNX adapter + independent report layer.
 - `edgefit-diff`: snapshot comparison for PR regression checks, including
   active-versus-suppressed diagnostic state changes.
 - `edgefit-cli`: command-line entrypoint.
+- `python/edgefit`: Python orchestration, ONNX entry, explicit profile loading,
+  batch execution, and report handling over the same Rust engine.
+- `python/native`: a thin PyO3 ABI layer; it contains no analysis policy.
 - `tools/onnx-normalize`: Python adapter that delegates ONNX checking and shape
   inference to the official `onnx` package. It includes external weight files
   in model-budget metadata and rejects nested subgraphs, local functions, and
@@ -69,6 +72,13 @@ trace so a small placement shift cannot create an unreadable regression diff.
 For adapter-generated ONNX facts, each used operator domain must have an
 explicit target-profile opset cap. Missing caps fail closed instead of silently
 claiming runtime compatibility.
+
+Rust CLI and Python framework share `edgefit-core`. The binding crosses the ABI
+with normalized JSON, target YAML, suppression IDs, and rendered report text;
+it never calls Rust once per node. Canonical single-model reports remain Rust
+output, while Python owns normalization, explicit plugin orchestration, and
+ordered batch composition. Production imports use prebuilt PyO3 wheels rather
+than compiling Rust source at import time.
 
 When ONNX checking succeeds but shape inference fails, the adapter emits the
 checker-approved graph with `normalization.shape_inference.status = failed`.
