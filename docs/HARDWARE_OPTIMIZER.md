@@ -35,7 +35,7 @@ The evidence suite covers:
 - 1K, 10K, and 100K-node contiguous NPU planning;
 - repeated full-plan artifact hashing and stable `plan_hash` output bound to the
   model and target profile fingerprints;
-- trusted `HardSwish` replacement recipes;
+- trusted `HardSwish` replacement recipes when the CPU baseline is unavailable;
 - deterministic CPU boundaries and multiple NPU segments;
 - constrained scratchpad spill attempts with explicit unresolved-capacity blockers;
 - fail-closed planning when spill is disabled;

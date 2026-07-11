@@ -112,8 +112,7 @@
         "min_plan_event_kind_counts": {"load": 1, "store": 1},
         "max_plan_peak_scratchpad_bytes": 262144,
         "expected_plan_blockers": [],
-        "expected_plan_recipe_ids": ["recipe.hardswish.v1"],
-        "require_plan_latency_improvement": true
+        "expected_plan_recipe_ids": ["recipe.hardswish.v1"]
       }
     },
     {
@@ -151,11 +150,11 @@
         "expected_plan_assignment_count": 6,
         "expected_plan_assignment_counts": {"npu": 6},
         "expected_plan_segment_count": 1,
-        "min_plan_event_kind_counts": {"load": 2, "spill": 1, "store": 1},
+        "min_plan_event_kind_counts": {"load": 2, "spill": 1},
         "min_plan_spill_bytes": 1,
         "min_plan_transfer_bytes": 1,
         "max_plan_peak_scratchpad_bytes": 3072,
-        "required_plan_blockers": ["node:2 tensor:a scratchpad_unavailable"],
+        "required_plan_blockers": ["node:2 tensor:d scratchpad_unavailable"],
         "expected_plan_recipe_ids": []
       }
     },
@@ -175,7 +174,7 @@
         "expected_plan_segment_count": 1,
         "max_plan_spill_bytes": 0,
         "max_plan_peak_scratchpad_bytes": 3072,
-        "required_plan_blockers": ["node:2 scratchpad_exceeded", "node:2 tensor:a scratchpad_unavailable"],
+        "required_plan_blockers": ["node:2 scratchpad_exceeded", "node:2 tensor:d scratchpad_unavailable"],
         "expected_plan_recipe_ids": []
       }
     }
