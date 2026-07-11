@@ -2,7 +2,7 @@
 //!
 //! 本模块保持 profile 的向后兼容默认值，并拒绝无法安全解释的字段或取值。
 
-use edgefit_ir::EdgeFitResult;
+use edgefit_ir::{AttributeValue, EdgeFitResult, FloatAttribute};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -10,6 +10,12 @@ use std::path::{Path, PathBuf};
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct OpRule {
     pub dtypes: BTreeSet<String>,
+    /// 按零基输入端口声明的 dtype 白名单；未声明端口时沿用聚合 dtypes。
+    pub input_dtypes: BTreeMap<usize, BTreeSet<String>>,
+    /// 按零基输出端口声明的 dtype 白名单；未声明端口时沿用聚合 dtypes。
+    pub output_dtypes: BTreeMap<usize, BTreeSet<String>>,
+    /// 属性名到允许标量值的白名单；未声明属性时不增加属性约束。
+    pub attributes: BTreeMap<String, BTreeSet<AttributeValue>>,
     pub max_rank: Option<u64>,
     /// 单个节点执行期间需要独占的临时工作区字节数。
     pub workspace_bytes: u64,
@@ -213,6 +219,25 @@ impl TargetProfile {
                     ));
                 }
             }
+            for (scope, contracts) in [
+                ("input_dtypes", &rule.input_dtypes),
+                ("output_dtypes", &rule.output_dtypes),
+            ] {
+                for (port, allowed) in contracts {
+                    if allowed.is_empty() {
+                        errors.push(format!(
+                            "ops.allow.{domain}.{op}.{scope}.{port} must contain at least one dtype"
+                        ));
+                    }
+                }
+            }
+            for (attribute, allowed) in &rule.attributes {
+                if allowed.is_empty() {
+                    errors.push(format!(
+                        "ops.allow.{domain}.{op}.attributes.{attribute} must contain at least one scalar value"
+                    ));
+                }
+            }
         }
         // int8 是量化策略的收窄条件，不能脱离 quantization.required 单独启用。
         if self.require_int8 && !self.quantization_required {
@@ -275,6 +300,7 @@ struct ParseState {
     ops_allow: bool,
     ops_domain: String,
     current_op: Option<String>,
+    op_rule_section: Option<String>,
     shape_symbols: bool,
 }
 
@@ -353,6 +379,7 @@ pub fn parse_profile(text: &str, source: PathBuf) -> EdgeFitResult<TargetProfile
             state.ops_allow = false;
             state.ops_domain.clear();
             state.current_op = None;
+            state.op_rule_section = None;
             state.shape_symbols = false;
             if key == "profile_version" {
                 profile_version = clean_scalar(value);
@@ -528,10 +555,14 @@ fn parse_ops_line(
         4 if state.ops_allow => state.ops_domain = key.to_string(),
         6 if !state.ops_domain.is_empty() => {
             state.current_op = Some(key.to_string());
+            state.op_rule_section = None;
             allowed_ops
                 .entry((state.ops_domain.clone(), key.to_string()))
                 .or_insert(OpRule {
                     dtypes: BTreeSet::new(),
+                    input_dtypes: BTreeMap::new(),
+                    output_dtypes: BTreeMap::new(),
+                    attributes: BTreeMap::new(),
                     max_rank: None,
                     workspace_bytes: 0,
                     first_output_inplace_input_index: None,
@@ -567,10 +598,134 @@ fn parse_ops_line(
                         })?,
                     );
                 }
+                "input_dtypes" | "output_dtypes" | "attributes" if value.is_empty() => {
+                    state.op_rule_section = Some(key.to_string());
+                }
                 _ => return Err(format!("unsupported operator rule field {key}")),
             }
         }
+        10 => {
+            let Some(op) = state.current_op.clone() else {
+                return Err("operator contract without operator name".to_string());
+            };
+            let Some(rule) = allowed_ops.get_mut(&(state.ops_domain.clone(), op)) else {
+                return Err("operator rule was not initialized".to_string());
+            };
+            match state.op_rule_section.as_deref() {
+                Some("input_dtypes") => {
+                    insert_port_dtypes(&mut rule.input_dtypes, key, value, "input_dtypes")?;
+                }
+                Some("output_dtypes") => {
+                    insert_port_dtypes(&mut rule.output_dtypes, key, value, "output_dtypes")?;
+                }
+                Some("attributes") => {
+                    let allowed = parse_list(value)
+                        .into_iter()
+                        .map(|item| parse_attribute_contract_value(&item))
+                        .collect::<EdgeFitResult<BTreeSet<_>>>()?;
+                    if allowed.is_empty() {
+                        return Err(format!(
+                            "operator attribute {key} must contain typed values such as int:1 or string:NOTSET"
+                        ));
+                    }
+                    if rule.attributes.insert(key.to_string(), allowed).is_some() {
+                        return Err(format!("duplicate operator attribute constraint {key}"));
+                    }
+                }
+                _ => return Err(format!(
+                    "unsupported operator contract field {key} at indentation {indent}"
+                )),
+            }
+        }
         _ => return Err(format!("unsupported ops field {key} at indentation {indent}")),
+    }
+    Ok(())
+}
+
+/// 属性值必须带类型前缀，避免整数 `1` 与字符串 `"1"` 被误判为同一能力。
+fn parse_attribute_contract_value(value: &str) -> EdgeFitResult<AttributeValue> {
+    let (kind, payload) = value
+        .split_once(':')
+        .ok_or_else(|| format!("operator attribute value {value} requires a type prefix"))?;
+    if payload.is_empty() {
+        return Err(format!("operator attribute value {value} requires a value"));
+    }
+    match kind {
+        "int" => payload
+            .parse::<i64>()
+            .map(AttributeValue::Int)
+            .map_err(|_| format!("operator attribute value {value} requires an int64")),
+        "float" => {
+            let parsed = payload
+                .parse::<f64>()
+                .map_err(|_| format!("operator attribute value {value} requires a float"))?;
+            if !parsed.is_finite() {
+                return Err(format!("operator attribute value {value} must be finite"));
+            }
+            Ok(AttributeValue::Float(FloatAttribute::from_f64(parsed)))
+        }
+        "string" => Ok(AttributeValue::String(payload.to_string())),
+        "ints" => Ok(AttributeValue::Ints(parse_attribute_array(
+            payload,
+            value,
+            |item| item.parse::<i64>().map_err(|_| ()),
+        )?)),
+        "floats" => {
+            let values = parse_attribute_array(payload, value, |item| {
+                item.parse::<f64>().map_err(|_| ()).and_then(|number| {
+                    if number.is_finite() { Ok(number) } else { Err(()) }
+                })
+            })?;
+            Ok(AttributeValue::Floats(
+                values.into_iter().map(FloatAttribute::from_f64).collect(),
+            ))
+        }
+        "strings" => Ok(AttributeValue::Strings(
+            payload.split(';').map(str::to_string).collect(),
+        )),
+        _ => Err(format!("unsupported operator attribute value type {kind}")),
+    }
+}
+
+fn parse_attribute_array<T>(
+    payload: &str,
+    original: &str,
+    parse: impl Fn(&str) -> Result<T, ()>,
+) -> EdgeFitResult<Vec<T>> {
+    payload
+        .split(';')
+        .map(|item| {
+            parse(item).map_err(|_| format!("invalid operator attribute array value {original}"))
+        })
+        .collect()
+}
+
+/// 严格解析端口键，避免 `00` 等多种文本映射到同一端口而形成歧义。
+fn insert_port_dtypes(
+    contracts: &mut BTreeMap<usize, BTreeSet<String>>,
+    key: &str,
+    value: &str,
+    scope: &str,
+) -> EdgeFitResult<()> {
+    let port = key
+        .parse::<usize>()
+        .map_err(|_| format!("operator {scope} port {key} must be a zero-based integer"))?;
+    if port.to_string() != key {
+        return Err(format!(
+            "operator {scope} port {key} must use canonical zero-based integer syntax"
+        ));
+    }
+    let allowed = parse_list(value)
+        .into_iter()
+        .map(|item| edgefit_ir::normalize_dtype(&item))
+        .collect::<BTreeSet<_>>();
+    if allowed.is_empty() {
+        return Err(format!(
+            "operator {scope} port {port} must contain at least one dtype"
+        ));
+    }
+    if contracts.insert(port, allowed).is_some() {
+        return Err(format!("duplicate operator {scope} port {port}"));
     }
     Ok(())
 }
@@ -686,6 +841,14 @@ ops:
     ai.onnx:
       Conv:
         dtypes: [int8]
+        input_dtypes:
+          0: [int8]
+          1: [int32, int64]
+        output_dtypes:
+          0: [int8]
+        attributes:
+          auto_pad: [string:NOTSET, string:SAME_UPPER]
+          group: [int:1, int:2]
         workspace_bytes: 8
         first_output_inplace_input_index: 0
     com.microsoft:
@@ -709,6 +872,19 @@ quantization:
         let conv = profile.op_rule("ai.onnx", "Conv").unwrap();
         assert_eq!(conv.workspace_bytes, 8);
         assert_eq!(conv.first_output_inplace_input_index, Some(0));
+        assert_eq!(conv.input_dtypes.get(&0).unwrap(), &BTreeSet::from(["int8".to_string()]));
+        assert_eq!(
+            conv.input_dtypes.get(&1).unwrap(),
+            &BTreeSet::from(["int32".to_string(), "int64".to_string()])
+        );
+        assert_eq!(conv.output_dtypes.get(&0).unwrap(), &BTreeSet::from(["int8".to_string()]));
+        assert_eq!(
+            conv.attributes.get("auto_pad").unwrap(),
+            &BTreeSet::from([
+                AttributeValue::String("NOTSET".to_string()),
+                AttributeValue::String("SAME_UPPER".to_string()),
+            ])
+        );
     }
 
     #[test]
@@ -733,6 +909,68 @@ ops:
         assert_eq!(profile.tensor_alignment_bytes, 1);
         assert_eq!(relu.workspace_bytes, 0);
         assert_eq!(relu.first_output_inplace_input_index, None);
+        assert!(relu.input_dtypes.is_empty());
+        assert!(relu.output_dtypes.is_empty());
+        assert!(relu.attributes.is_empty());
+    }
+
+    #[test]
+    fn rejects_invalid_or_duplicate_operator_contract_ports() {
+        for contracts in [
+            "input_dtypes:\n          first: [int8]",
+            "input_dtypes:\n          00: [int8]",
+            "input_dtypes:\n          0: []",
+            "input_dtypes:\n          0: [int8]\n          0: [uint8]",
+        ] {
+            let text = format!(
+                r#"
+profile_version: edgefit.target.v1
+metadata:
+  source: test profile
+  confidence: seed
+  last_verified: 2026-07-11
+target:
+  id: demo
+ops:
+  allow:
+    ai.onnx:
+      Add:
+        dtypes: [int8]
+        {contracts}
+"#
+            );
+
+            assert!(parse_profile(&text, PathBuf::from("target.yaml")).is_err());
+        }
+    }
+
+    #[test]
+    fn rejects_empty_or_duplicate_operator_attribute_constraints() {
+        for contracts in [
+            "attributes:\n          axis: []",
+            "attributes:\n          axis: [int:0]\n          axis: [int:1]",
+            "attributes:\n          axis: [0]",
+        ] {
+            let text = format!(
+                r#"
+profile_version: edgefit.target.v1
+metadata:
+  source: test profile
+  confidence: seed
+  last_verified: 2026-07-11
+target:
+  id: demo
+ops:
+  allow:
+    ai.onnx:
+      Softmax:
+        dtypes: [float32]
+        {contracts}
+"#
+            );
+
+            assert!(parse_profile(&text, PathBuf::from("target.yaml")).is_err());
+        }
     }
 
     #[test]

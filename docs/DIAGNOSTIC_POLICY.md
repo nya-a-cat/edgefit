@@ -54,6 +54,11 @@ error for a missing domain import or a version above a declared cap. `EF0105`,
 allocation/external data or requires RAM-resident weights cannot be proven
 compatible without those constraints.
 
+`EF0206` and `EF0207` are errors because an explicitly declared kernel contract
+cannot be proven from an absent, unknown, or mismatched attribute/port fact. Per-port dtype rules take
+precedence over the aggregate operator dtype rule at that port, avoiding
+duplicate `EF0202` findings while preserving legacy profile behavior elsewhere.
+
 `EF0602` is warning-only because target-eligible QDQ/QOperator coverage is
 static graph evidence, not proof that a concrete runtime will or will not
 execute the model with quantized kernels. `EF0603` is also warning-only: floating-point

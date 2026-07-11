@@ -1,7 +1,7 @@
 //! EdgeFit 诊断策略：把模型事实与目标合同转换为稳定、可自动阻断的业务结论。
 
 use edgefit_analyze::Metrics;
-use edgefit_ir::NormalizedModel;
+use edgefit_ir::{AttributeValue, NormalizedModel};
 use edgefit_target::TargetProfile;
 use std::collections::BTreeSet;
 
@@ -479,6 +479,8 @@ pub fn evaluate(
         });
     }
 
+    append_operator_contract_diagnostics(model, profile, &mut diagnostics);
+
     for dtype in &metrics.unsupported_dtypes {
         diagnostics.push(Diagnostic {
             id: "EF0301".to_string(),
@@ -665,6 +667,139 @@ pub fn evaluate(
     }
 }
 
+/// 将节点属性和逐端口 dtype 与 target 合同逐项对照；缺失或未知事实一律关闭放行。
+fn append_operator_contract_diagnostics(
+    model: &NormalizedModel,
+    profile: &TargetProfile,
+    diagnostics: &mut Vec<Diagnostic>,
+) {
+    for (node_index, node) in model.nodes.iter().enumerate() {
+        let Some(rule) = profile.op_rule(&node.domain, &node.op_type) else {
+            continue;
+        };
+        for (attribute, allowed) in &rule.attributes {
+            let actual_value = node.attributes.get(attribute);
+            if actual_value.is_some_and(|value| allowed.contains(value)) {
+                continue;
+            }
+            let actual = actual_value.map(canonical_attribute_value);
+            diagnostics.push(Diagnostic {
+                id: "EF0206".to_string(),
+                severity: "error".to_string(),
+                category: "operator".to_string(),
+                location: Some(format!("node:{node_index} attribute:{attribute}")),
+                title: "Operator attribute is outside the target contract".to_string(),
+                message: format!(
+                    "Operator {} attribute {} is {}; allowed values are [{}].",
+                    node.op_type,
+                    attribute,
+                    actual.as_deref().unwrap_or("missing"),
+                    allowed
+                        .iter()
+                        .map(canonical_attribute_value)
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ),
+                actual,
+                budget: Some(
+                    allowed
+                        .iter()
+                        .map(canonical_attribute_value)
+                        .collect::<Vec<_>>()
+                        .join(","),
+                ),
+                suggestions: vec![
+                    "Export the operator with an attribute value supported by the target runtime"
+                        .to_string(),
+                    "Expand the target contract only after verifying the runtime kernel"
+                        .to_string(),
+                ],
+            });
+        }
+        append_port_contracts(
+            node_index,
+            "input",
+            &node.op_type,
+            &node.inputs,
+            &rule.input_dtypes,
+            model,
+            diagnostics,
+        );
+        append_port_contracts(
+            node_index,
+            "output",
+            &node.op_type,
+            &node.outputs,
+            &rule.output_dtypes,
+            model,
+            diagnostics,
+        );
+    }
+}
+
+fn append_port_contracts(
+    node_index: usize,
+    direction: &str,
+    op_type: &str,
+    tensors: &[String],
+    contracts: &std::collections::BTreeMap<usize, BTreeSet<String>>,
+    model: &NormalizedModel,
+    diagnostics: &mut Vec<Diagnostic>,
+) {
+    for (port, allowed) in contracts {
+        let tensor_name = tensors.get(*port).filter(|name| !name.is_empty());
+        let actual = tensor_name
+            .and_then(|name| model.tensors.get(name))
+            .and_then(|tensor| tensor.dtype.as_deref())
+            .map(edgefit_ir::normalize_dtype);
+        if actual.as_ref().is_some_and(|dtype| allowed.contains(dtype)) {
+            continue;
+        }
+        diagnostics.push(Diagnostic {
+            id: "EF0207".to_string(),
+            severity: "error".to_string(),
+            category: "operator".to_string(),
+            location: Some(format!("node:{node_index} {direction}:{port}")),
+            title: "Operator port dtype is outside the target contract".to_string(),
+            message: format!(
+                "Operator {op_type} {direction} port {port} has dtype {}; allowed dtypes are [{}].",
+                actual.as_deref().unwrap_or("missing"),
+                allowed.iter().cloned().collect::<Vec<_>>().join(", ")
+            ),
+            actual,
+            budget: Some(allowed.iter().cloned().collect::<Vec<_>>().join(",")),
+            suggestions: vec![
+                "Export or cast the tensor to the dtype required at this operator port"
+                    .to_string(),
+            ],
+        });
+    }
+}
+
+fn canonical_attribute_value(value: &AttributeValue) -> String {
+    match value {
+        AttributeValue::Int(value) => format!("int:{value}"),
+        AttributeValue::Float(value) => format!("float:{:e}", value.as_f64()),
+        AttributeValue::String(value) => format!("string:{value}"),
+        AttributeValue::Ints(values) => format!(
+            "ints:{}",
+            values.iter().map(ToString::to_string).collect::<Vec<_>>().join(";")
+        ),
+        AttributeValue::Floats(values) => format!(
+            "floats:{}",
+            values
+                .iter()
+                .map(|value| format!("{:e}", value.as_f64()))
+                .collect::<Vec<_>>()
+                .join(";")
+        ),
+        AttributeValue::Strings(values) => format!("strings:{}", values.join(";")),
+        AttributeValue::Unknown { onnx_type, reason } => {
+            format!("unknown:{onnx_type}:{reason}")
+        }
+    }
+}
+
 fn is_float_dtype(dtype: &str) -> bool {
     matches!(dtype, "float16" | "float32" | "float64" | "bfloat16")
 }
@@ -700,8 +835,8 @@ fn format_peak_location(metrics: &Metrics) -> String {
 mod tests {
     use super::*;
     use edgefit_analyze::{analyze, Metrics};
-    use edgefit_ir::{NodeInfo, NormalizedModel};
-    use edgefit_target::{OpRule, ProfileMetadata, TargetProfile};
+    use edgefit_ir::{AttributeValue, NodeInfo, NormalizedModel, TensorInfo};
+    use edgefit_target::{parse_profile, OpRule, ProfileMetadata, TargetProfile};
     use std::collections::{BTreeMap, BTreeSet};
     use std::path::PathBuf;
 
@@ -856,6 +991,7 @@ mod tests {
                 op_type: "Relu".to_string(),
                 inputs: vec![],
                 outputs: vec![],
+                attributes: BTreeMap::new(),
             }],
         };
         let profile = TargetProfile {
@@ -886,6 +1022,9 @@ mod tests {
                 ("ai.onnx".to_string(), "Relu".to_string()),
                 OpRule {
                     dtypes: BTreeSet::new(),
+                    input_dtypes: BTreeMap::new(),
+                    output_dtypes: BTreeMap::new(),
+                    attributes: BTreeMap::new(),
                     max_rank: None,
                     workspace_bytes: 0,
                     first_output_inplace_input_index: None,
@@ -904,5 +1043,119 @@ mod tests {
         assert_eq!(result.diagnostics.len(), 1);
         assert_eq!(result.diagnostics[0].id, "EF0205");
         assert_eq!(result.diagnostics[0].severity, "error");
+    }
+
+    #[test]
+    fn fails_closed_for_attribute_and_port_contract_mismatches() {
+        let model = NormalizedModel {
+            path: "model.onnx".to_string(),
+            sha256: "sha256".to_string(),
+            file_bytes: 1,
+            external_data_file_count: 0,
+            adapter_generated: true,
+            opset_versions: BTreeMap::from([("ai.onnx".to_string(), 13)]),
+            shape_inference_status: "pass".to_string(),
+            shape_inference_error: None,
+            inputs: vec!["x".to_string()],
+            outputs: vec!["y".to_string()],
+            tensors: BTreeMap::from([
+                (
+                    "x".to_string(),
+                    TensorInfo {
+                        name: "x".to_string(),
+                        dtype: Some("int8".to_string()),
+                        shape: Some(vec![]),
+                        bytes: None,
+                        initializer: false,
+                    },
+                ),
+                (
+                    "y".to_string(),
+                    TensorInfo {
+                        name: "y".to_string(),
+                        dtype: Some("float32".to_string()),
+                        shape: Some(vec![]),
+                        bytes: None,
+                        initializer: false,
+                    },
+                ),
+            ]),
+            nodes: vec![NodeInfo {
+                name: Some("softmax".to_string()),
+                domain: "ai.onnx".to_string(),
+                op_type: "Softmax".to_string(),
+                inputs: vec!["x".to_string()],
+                outputs: vec!["y".to_string()],
+                attributes: BTreeMap::from([
+                    ("axis".to_string(), AttributeValue::Int(2)),
+                    (
+                        "future".to_string(),
+                        AttributeValue::Unknown {
+                            onnx_type: 99,
+                            reason: "unsupported".to_string(),
+                        },
+                    ),
+                ]),
+            }],
+        };
+        let profile = parse_profile(
+            r#"
+profile_version: edgefit.target.v1
+metadata:
+  source: test
+  confidence: seed
+  last_verified: 2026-07-11
+target:
+  id: test
+  name: Test
+  class: edge-cpu
+memory:
+  flash_bytes: 100
+  ram_bytes: 100
+  model_file_budget_bytes: 100
+  peak_activation_budget_bytes: 100
+  weights_residency: file
+runtime:
+  name: test
+  static_shapes_required: false
+  dynamic_allocation_allowed: true
+  external_memory_allowed: true
+dtype:
+  allowed: [int8, float32]
+  preferred: int8
+  fp32_allowed: true
+opsets:
+  ai.onnx: 13
+ops:
+  allow:
+    ai.onnx:
+      Softmax:
+        dtypes: [int8, float32]
+        input_dtypes:
+          0: [uint8]
+        output_dtypes:
+          0: [int8]
+        attributes:
+          axis: [int:1]
+shape:
+  max_rank: 4
+  allow_unknown_dims: true
+quantization:
+  required: false
+  require_int8: false
+  min_quantized_weight_fraction: 0
+  min_operator_coverage: 0
+"#,
+            PathBuf::from("target.yaml"),
+        )
+        .unwrap();
+
+        let metrics = analyze(&model, &profile);
+        let result = evaluate(&model, &profile, &metrics);
+
+        assert_eq!(result.status, "fail");
+        assert_eq!(result.diagnostics.iter().filter(|item| item.id == "EF0206").count(), 1);
+        assert_eq!(result.diagnostics.iter().filter(|item| item.id == "EF0207").count(), 2);
+        assert!(!result.diagnostics.iter().any(|item| item.id == "EF0202"));
     }
 }

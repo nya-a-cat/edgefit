@@ -73,6 +73,34 @@ target-specific runtime evidence has been reviewed yet. Add non-default values
 only from a concrete runtime/kernel contract; guessed values would make a RAM
 budget pass look more certain than it is.
 
+Operator rules may also narrow dtype by zero-based port and constrain captured
+ONNX attributes:
+
+```yaml
+ops:
+  allow:
+    ai.onnx:
+      Softmax:
+        dtypes: [float32]
+        input_dtypes:
+          0: [float32]
+        output_dtypes:
+          0: [float32]
+        attributes:
+          axis: [int:-1, int:1]
+```
+
+`input_dtypes` and `output_dtypes` override the aggregate `dtypes` rule only at
+the listed port. A missing port, tensor, or dtype fails closed with `EF0207`.
+Attribute values use typed canonical forms: `int:`, `float:`, `string:`, and
+their `ints:`, `floats:`, or `strings:` array forms (array elements are joined
+with `;`). Missing, mismatched, or unmodeled evidence for an explicitly
+constrained attribute fails with `EF0206`. Unconstrained attributes remain
+recorded without changing legacy profile behavior. Older profiles omit all
+three maps and retain aggregate dtype behavior.
+The checked-in seed profiles intentionally add no port or attribute claims
+without reviewed runtime-kernel evidence.
+
 For ONNX version compatibility, a profile declares per-domain caps:
 
 ```yaml

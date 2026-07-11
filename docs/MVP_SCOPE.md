@@ -29,6 +29,8 @@ The MVP implements the first loop from the feasibility report:
 - `EF0203`: operator tensor rank exceeds the op rule.
 - `EF0204`: a used domain has no imported opset or exceeds a declared target maximum.
 - `EF0205`: an adapter-generated model uses a domain with no target opset maximum; this is fail-closed.
+- `EF0206`: an operator attribute is missing, unmodeled, or outside its typed target contract.
+- `EF0207`: an operator input or output port is missing, has unknown dtype, or violates its port contract.
 - `EF0301`: tensor dtype is outside the target profile.
 - `EF0302`: tensor dtype metadata is missing.
 - `EF0401`: model file exceeds the target flash budget.
@@ -54,6 +56,10 @@ Adapter-generated ONNX analysis records domain opset imports, and every used
 domain requires `opsets.<domain>: <max>`. A direct pre-normalized JSON is always
 marked as trusted input because its own metadata cannot establish adapter
 provenance or bind it cryptographically to an original ONNX artifact.
+Node attributes retain supported scalar and scalar-array values in the optional
+`graph.nodes[].attributes` map. Historical normalized v1 JSON without this map
+remains readable; unknown attribute kinds stay explicit and cannot satisfy an
+attribute-sensitive target contract or optimizer candidate.
 
 The activation-memory path now keeps logical liveness and physical arena
 placement separate. Budget policy uses a deterministic indexed best-fit plan
