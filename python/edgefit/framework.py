@@ -77,6 +77,34 @@ def render(
         raise EdgeFitError(str(exc)) from exc
 
 
+def optimize(
+    model: str | Path,
+    target: str | Path | TargetProfileSource,
+) -> dict[str, object]:
+    """生成可审计的硬件执行计划，不修改输入模型。"""
+    return json.loads(render_optimization(model, target))
+
+
+def render_optimization(
+    model: str | Path,
+    target: str | Path | TargetProfileSource,
+    *,
+    format: str = "json",
+) -> str:
+    prepared = _prepare_model(Path(model))
+    profile = target if isinstance(target, TargetProfileSource) else load_profile(target)
+    try:
+        return _native.optimize(
+            prepared.text,
+            profile.text,
+            str(profile.path),
+            format,
+            prepared.adapter_generated,
+        )
+    except ValueError as exc:
+        raise EdgeFitError(str(exc)) from exc
+
+
 def batch(
     models: Iterable[str | Path],
     target: str | Path | TargetProfileSource,

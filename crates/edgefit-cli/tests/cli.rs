@@ -35,6 +35,7 @@ fn alpha_command_and_exit_code_contract_is_stable() {
     for command in [
         "target validate <profile>",
         "check <model.onnx|model.edgefit.json>",
+        "optimize <model.onnx|model.edgefit.json>",
         "snapshot <model.onnx|model.edgefit.json>",
         "diff --old path --new path",
     ] {
@@ -54,6 +55,26 @@ fn alpha_command_and_exit_code_contract_is_stable() {
     assert!(String::from_utf8_lossy(&version.stdout).starts_with("edgefit "));
 }
 
+#[test]
+fn optimize_emits_a_machine_readable_plan() {
+    let output = run(&[
+        "optimize",
+        &fixture("examples/models/virtual_npu_tiny.edgefit.json"),
+        "--target",
+        &fixture("targets/virtual-npu.yaml"),
+    ]);
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json = String::from_utf8_lossy(&output.stdout);
+    assert!(json.contains("\"schema\": \"edgefit.optimization_plan.v1\""));
+    assert!(json.contains("\"status\": \"pass\""));
+    assert!(json.contains("\"accelerator_id\": \"generic-npu-v1\""));
+    parse_json(&json).expect("parse optimization plan");
+}
+
 fn unique_dir(name: &str) -> PathBuf {
     let stamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -69,6 +90,7 @@ fn target_validate_accepts_seed_profiles() {
     for (path, expected_id) in [
         ("targets/esp32s3.yaml", "esp32s3_custom_v1"),
         ("targets/ort-mobile-cpu.yaml", "ort_mobile_cpu_seed_v1"),
+        ("targets/virtual-npu.yaml", "edgefit_virtual_npu_v1"),
     ] {
         let output = run(&["target", "validate", &fixture(path)]);
         assert!(

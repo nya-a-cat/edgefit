@@ -1,0 +1,127 @@
+profile_version: edgefit.target.v1
+
+metadata:
+  source: EdgeFit generic virtual NPU cost model; simulated values only
+  confidence: seed
+  last_verified: 2026-07-11
+
+target:
+  id: edgefit_virtual_npu_v1
+  name: EdgeFit Generic Virtual NPU
+  class: virtual-npu
+
+memory:
+  flash_bytes: 16777216
+  ram_bytes: 8388608
+  model_file_budget_bytes: 16777216
+  peak_activation_budget_bytes: 8388608
+  weights_residency: ram
+  tensor_alignment_bytes: 64
+
+runtime:
+  name: edgefit-virtual-npu
+  static_shapes_required: true
+  dynamic_allocation_allowed: false
+  external_memory_allowed: true
+
+dtype:
+  allowed: [int8]
+  preferred: int8
+  fp32_allowed: false
+
+opsets:
+  ai.onnx: 18
+
+accelerator:
+  id: generic-npu-v1
+  confidence: seed-simulated
+  scratchpad_bytes: 262144
+  tensor_alignment_bytes: 64
+  dma_burst_bytes: 64
+  dma_setup_ns: 500
+  dma_read_bytes_per_second: 1000000000
+  dma_write_bytes_per_second: 800000000
+  spill_allowed: true
+
+ops:
+  allow:
+    ai.onnx:
+      Add:
+        dtypes: [int8]
+        cpu_cost:
+          id: cpu.add.int8
+          kind: element
+          fixed_ns: 3000
+          throughput_per_second: 50000000
+        npu_cost:
+          id: npu.add.int8
+          kind: element
+          fixed_ns: 300
+          throughput_per_second: 1000000000
+      Mul:
+        dtypes: [int8]
+        cpu_cost:
+          id: cpu.mul.int8
+          kind: element
+          fixed_ns: 3000
+          throughput_per_second: 40000000
+        npu_cost:
+          id: npu.mul.int8
+          kind: element
+          fixed_ns: 300
+          throughput_per_second: 800000000
+      Relu:
+        dtypes: [int8]
+        cpu_cost:
+          id: cpu.relu.int8
+          kind: element
+          fixed_ns: 2500
+          throughput_per_second: 70000000
+        npu_cost:
+          id: npu.relu.int8
+          kind: element
+          fixed_ns: 250
+          throughput_per_second: 1200000000
+      HardSigmoid:
+        dtypes: [int8]
+        cpu_cost:
+          id: cpu.hardsigmoid.int8
+          kind: element
+          fixed_ns: 4000
+          throughput_per_second: 30000000
+        npu_cost:
+          id: npu.hardsigmoid.int8
+          kind: element
+          fixed_ns: 400
+          throughput_per_second: 600000000
+      MatMul:
+        dtypes: [int8]
+        cpu_cost:
+          id: cpu.matmul.int8
+          kind: mac
+          fixed_ns: 6000
+          throughput_per_second: 200000000
+        npu_cost:
+          id: npu.matmul.int8
+          kind: mac
+          fixed_ns: 600
+          throughput_per_second: 8000000000
+
+recipes:
+  ai.onnx:
+    HardSwish:
+      id: recipe.hardswish.v1
+      trusted: true
+      source: EdgeFit simulated semantic contract
+      version: 1
+      replacement_ops: [HardSigmoid, Mul]
+
+shape:
+  max_rank: 6
+  allow_unknown_dims: false
+
+quantization:
+  required: true
+  require_int8: true
+  min_quantized_weight_fraction: 1.0
+  min_operator_coverage: 1.0

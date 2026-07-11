@@ -13,12 +13,14 @@ import edgefit
 
 report = edgefit.check("model.onnx", "targets/device.yaml")
 reports = edgefit.batch(["a.onnx", "b.onnx"], "targets/device.yaml")
+plan = edgefit.optimize("model.onnx", "targets/virtual-npu.yaml")
 ```
 
 The module CLI uses one entry point:
 
 ```bash
 python -m edgefit check model.onnx --target targets/device.yaml --format json
+python -m edgefit optimize model.onnx --target targets/virtual-npu.yaml
 ```
 
 Single-model JSON is rendered by the Rust engine and is therefore the canonical

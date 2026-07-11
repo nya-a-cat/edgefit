@@ -1,9 +1,10 @@
 use edgefit_core::{
     check_adapter_generated_model_with_suppressions, check_model,
-    check_model_with_suppressions,
+    check_model_with_suppressions, optimize_adapter_generated_model, optimize_model,
 };
 use edgefit_diff::{diff_snapshots, load_snapshot, render_diff};
 use edgefit_report::{render_report, render_snapshot};
+use edgefit_optimize::render_plan;
 use edgefit_target::load_profile;
 use std::env;
 use std::fs;
@@ -38,6 +39,7 @@ fn run(args: Vec<String>) -> Result<i32, String> {
     match args[0].as_str() {
         "target" => run_target(&args[1..]),
         "check" => run_check(&args[1..]),
+        "optimize" => run_optimize(&args[1..]),
         "snapshot" => run_snapshot(&args[1..]),
         "diff" => run_diff(&args[1..]),
         "version" | "-V" | "--version" => {
@@ -50,6 +52,32 @@ fn run(args: Vec<String>) -> Result<i32, String> {
         }
         other => Err(format!("unknown command {other}")),
     }
+}
+
+fn run_optimize(args: &[String]) -> Result<i32, String> {
+    let mut normalized_args = args.to_vec();
+    if !args.iter().any(|argument| argument == "--format") {
+        normalized_args.extend(["--format".to_string(), "json".to_string()]);
+    }
+    let parsed = parse_model_command(&normalized_args, false)?;
+    if parsed.format != "json" && parsed.format != "markdown" {
+        return Err("optimize --format must be json or markdown".to_string());
+    }
+    if !parsed.suppressions.is_empty() || parsed.summary.is_some() {
+        return Err("optimize does not accept --suppress or --summary".to_string());
+    }
+    let target = parsed.target.as_deref().ok_or("--target is required")?;
+    let prepared = match prepare_model(&parsed.model) {
+        Ok(prepared) => prepared,
+        Err(error) => return fail_with_execution_artifacts("optimize", &parsed, &error),
+    };
+    let plan = if prepared.cli_adapter_output {
+        optimize_adapter_generated_model(&prepared.path, target)?
+    } else {
+        optimize_model(&prepared.path, target)?
+    };
+    write_or_print(&render_plan(&plan, &parsed.format), parsed.out.as_deref())?;
+    Ok(if plan.status == "fail" { EXIT_POLICY_FAIL } else { EXIT_PASS })
 }
 
 fn run_target(args: &[String]) -> Result<i32, String> {
@@ -415,6 +443,7 @@ fn print_help() {
     println!("  version");
     println!("  target validate <profile>");
     println!("  check <model.onnx|model.edgefit.json> --target <profile> [--format text|json|markdown|sarif] [--out path] [--summary path] [--suppress id[,id]]");
+    println!("  optimize <model.onnx|model.edgefit.json> --target <profile> [--format json|markdown] [--out path]");
     println!("  snapshot <model.onnx|model.edgefit.json> --target <profile> --out path");
     println!("  diff --old path --new path [--format markdown|json] [--out path]");
 }

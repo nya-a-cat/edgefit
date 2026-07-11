@@ -1,6 +1,14 @@
 """EdgeFit Python 编排框架；公开 API 延迟加载，允许独立复用 ONNX adapter。"""
 
-__all__ = ["EdgeFitError", "batch", "check", "load_profile", "render"]
+__all__ = [
+    "EdgeFitError",
+    "batch",
+    "check",
+    "load_profile",
+    "optimize",
+    "render",
+    "render_optimization",
+]
 
 
 def __getattr__(name: str):
