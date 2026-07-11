@@ -2,8 +2,8 @@
 # ============================================================================
 # EdgeFit ESP-DL / ESP32-S3 QEMU 证据入口
 #
-# 下载并校验固定的 Espressif 示例模型，构建固件，在官方 QEMU 中执行 ESP-DL
-# 内置测试向量，并生成明确标注为 simulated 的 JSON/Markdown 证据。
+# 下载并校验固定的 Espressif 示例模型，构建固件，在官方 QEMU 中验证 ESP-DL
+# 模型加载与内存规划，并生成明确标注为 simulated 的 JSON/Markdown 证据。
 # ============================================================================
 
 set -euo pipefail
@@ -25,7 +25,9 @@ ESPDL_VERSION="3.3.7"
 ESPDL_COMMIT="7a3d4c02e8b978b5d4b7ddb23dc68f42e56e83c7"
 MODEL_BYTES="7664"
 MODEL_SHA256="877fc69afcb00dc0682a765f33031c6c78d53bdecdd0e6613387db07ab023537"
-MODEL_URL="https://raw.githubusercontent.com/espressif/esp-dl/${ESPDL_COMMIT}/examples/tutorial/how_to_load_test_profile_model/model_in_flash_rodata/main/models/s3/model.espdl"
+MODEL_SOURCE_PATH="examples/tutorial/how_to_load_test_profile_model/model_in_flash_rodata/main/models/s3/model.espdl"
+MODEL_URL="https://raw.githubusercontent.com/espressif/esp-dl/${ESPDL_COMMIT}/${MODEL_SOURCE_PATH}"
+QEMU_VERSION="esp-develop-9.2.2-20260417"
 QEMU_TIMEOUT_SECONDS=${EDGEFIT_QEMU_TIMEOUT_SECONDS:-90}
 
 require_command() {
@@ -67,12 +69,16 @@ qemu_exit=$?
 set -e
 
 sed "s#${ROOT}#<repo>#g" "$RAW_LOG" >"$PUBLIC_LOG"
-if ! grep -Fq "EDGEFIT_SIMULATION_START soc=esp32s3 evidence=simulated" "$PUBLIC_LOG"; then
+if ! grep -Fq "EDGEFIT_SIMULATION_START soc=esp32s3 scope=boot_model_load evidence=simulated" "$PUBLIC_LOG"; then
     echo "espdl-qemu: firmware start marker is missing" >&2
     exit 1
 fi
-if ! grep -Fq "EDGEFIT_SIMULATION_PASS soc=esp32s3 espdl_test=pass evidence=simulated" "$PUBLIC_LOG"; then
-    echo "espdl-qemu: ESP-DL test pass marker is missing" >&2
+if ! grep -Fq "EDGEFIT_MODEL_LOAD_PASS soc=esp32s3 signature=pass evidence=simulated" "$PUBLIC_LOG"; then
+    echo "espdl-qemu: ESP-DL model-load marker is missing" >&2
+    exit 1
+fi
+if ! grep -Fq "EDGEFIT_SIMULATION_PASS soc=esp32s3 model_load=pass memory_profile=pass numeric_inference=not_evaluated evidence=simulated" "$PUBLIC_LOG"; then
+    echo "espdl-qemu: simulation pass marker is missing" >&2
     exit 1
 fi
 if grep -Fq "EDGEFIT_SIMULATION_FAIL" "$PUBLIC_LOG"; then
@@ -100,13 +106,17 @@ firmware_sha256=$(sha256sum "$PROJECT_ELF" | awk '{print $1}')
     printf '  "esp_idf_version": "%s",\n' "$ESPIDF_VERSION"
     printf '  "esp_dl_version": "%s",\n' "$ESPDL_VERSION"
     printf '  "emulator": "espressif-qemu",\n'
+    printf '  "emulator_version": "%s",\n' "$QEMU_VERSION"
+    printf '  "scope": "firmware_boot_model_load",\n'
+    printf '  "numeric_inference": "not_evaluated",\n'
+    printf '  "optimized_esp32s3_pie_validated": false,\n'
     printf '  "qemu_exit_code": %s,\n' "$qemu_exit"
-    printf '  "model": {"bytes": %s, "sha256": "sha256:%s", "upstream_commit": "%s"},\n' \
-        "$actual_model_bytes" "$actual_model_sha256" "$ESPDL_COMMIT"
+    printf '  "model": {"bytes": %s, "sha256": "sha256:%s", "upstream_commit": "%s", "source_path": "%s"},\n' \
+        "$actual_model_bytes" "$actual_model_sha256" "$ESPDL_COMMIT" "$MODEL_SOURCE_PATH"
     printf '  "firmware": {"bytes": %s, "sha256": "sha256:%s"},\n' \
         "$firmware_bytes" "$firmware_sha256"
-    printf '  "assertions": {"firmware_started": true, "espdl_test_passed": true, "failure_marker_absent": true},\n'
-    printf '  "limitations": ["not_real_hardware", "no_device_latency_claim", "no_power_claim", "no_psram_claim"]\n'
+    printf '  "assertions": {"firmware_started": true, "model_loaded": true, "model_signature_validated": true, "memory_profile_completed": true, "failure_marker_absent": true},\n'
+    printf '  "limitations": ["not_real_hardware", "numeric_inference_not_evaluated", "no_optimized_pie_kernel_claim", "no_device_latency_claim", "no_power_claim", "no_psram_claim"]\n'
     printf '%s\n' '}'
 } >"$REPORT_JSON"
 
@@ -116,12 +126,16 @@ firmware_sha256=$(sha256sum "$PROJECT_ELF" | awk '{print $1}')
     printf '**Confidence:** `simulated`  \n'
     printf '**ESP-IDF:** `%s`  \n' "$ESPIDF_VERSION"
     printf '**ESP-DL:** `%s`  \n' "$ESPDL_VERSION"
+    printf '**QEMU:** `%s`  \n' "$QEMU_VERSION"
+    printf '**Scope:** `firmware_boot_model_load`  \n'
+    printf '**Numeric inference:** `not_evaluated`  \n'
     printf '**Model SHA-256:** `sha256:%s`  \n' "$actual_model_sha256"
     printf '**Firmware SHA-256:** `sha256:%s`\n\n' "$firmware_sha256"
     printf '%s\n' '- ESP32-S3 firmware booted in Espressif QEMU.'
-    printf '%s\n' '- ESP-DL loaded the aligned rodata model and passed its embedded test input/output.'
+    printf '%s\n' '- ESP-DL parsed and loaded the aligned ESP32-S3 rodata model with its expected INT8 input/output signature.'
+    printf '%s\n' '- ESP-DL completed its memory-profile path.'
     printf '%s\n' '- No firmware failure marker was emitted.'
-    printf '\n%s\n' 'QEMU evidence is not real-hardware latency, throughput, power, cache, PSRAM, or firmware-compatibility evidence.'
+    printf '\n%s\n' 'QEMU evidence does not evaluate numeric inference or validate optimized ESP32-S3 PIE/TIE kernels, real-hardware latency, throughput, power, cache, PSRAM, or firmware compatibility.'
 } >"$REPORT_MD"
 
 printf '%s\n' "$REPORT_JSON" "$REPORT_MD" "$PUBLIC_LOG"
