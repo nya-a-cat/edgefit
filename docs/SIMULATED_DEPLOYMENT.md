@@ -34,6 +34,20 @@
 `timeout` 正常终止。超时退出本身不构成通过；全部启动、加载和内存规划标记仍
 是强制条件。
 
+## 已验证运行
+
+[GitHub Actions 29143634474](https://github.com/nya-a-cat/edgefit/actions/runs/29143634474)
+在提交 `90948c5e2301e39dd0ca374aa1773dfb539d7458` 上通过：
+
+- 固件 ELF 为 25,292,964 B，SHA-256 为
+  `387db66213bd7fb6d85a6dce7f1d507da5034855962ee30048a2bb9ad9c1905d`。
+- 固定模型为 7,664 B，SHA-256 为
+  `877fc69afcb00dc0682a765f33031c6c78d53bdecdd0e6613387db07ab023537`。
+- QEMU 日志包含启动、模型签名和内存分类三个强制标记，且没有
+  `EDGEFIT_SIMULATION_FAIL`。
+- `qemu_exit_code=124` 表示全部标记出现后由宿主超时结束；证据仍明确记录
+  `numeric_inference=not_evaluated` 和 `optimized_esp32s3_pie_validated=false`。
+
 ## 数值验证边界
 
 诊断运行 [29112232002](https://github.com/nya-a-cat/edgefit/actions/runs/29112232002)
