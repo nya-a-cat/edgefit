@@ -94,8 +94,6 @@ ops:
         max_rank: 8
       Less:
         dtypes: [float32, int32, int64, bool]
-      Loop:
-        dtypes: [float32, int8, uint8, int32, int64, bool]
       Sigmoid:
         dtypes: [float32, int8, uint8]
       Slice:

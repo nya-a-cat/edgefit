@@ -82,6 +82,9 @@ target contract; they do not infer undocumented runtime kernel support.
   states separately: a new suppressed error or an active error newly moved into
   suppression is visible and blocks the diff, while an unchanged accepted risk
   does not create a new regression.
+- Direct ONNX adapter or adapter-backed analysis failures use exit code `2` and
+  `edgefit.execution_error.v1` at requested output paths. This evidence is not a
+  policy diagnostic and does not carry a pass/fail report status.
 
 ## ORT Profile Confidence Boundary
 

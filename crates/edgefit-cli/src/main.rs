@@ -63,14 +63,20 @@ fn run_target(args: &[String]) -> Result<i32, String> {
 
 fn run_check(args: &[String]) -> Result<i32, String> {
     let parsed = parse_model_command(args, false)?;
-    let prepared = prepare_model(&parsed.model)?;
     let target = parsed.target.as_deref().ok_or("--target is required")?;
+    let prepared = match prepare_model(&parsed.model) {
+        Ok(prepared) => prepared,
+        Err(error) => return fail_with_execution_artifacts("check", &parsed, &error),
+    };
     let report = if prepared.cli_adapter_output {
-        check_adapter_generated_model_with_suppressions(
+        match check_adapter_generated_model_with_suppressions(
             &prepared.path,
             target,
             &parsed.suppressions,
-        )?
+        ) {
+            Ok(report) => report,
+            Err(error) => return fail_with_execution_artifacts("check", &parsed, &error),
+        }
     } else {
         check_model_with_suppressions(&prepared.path, target, &parsed.suppressions)?
     };
@@ -91,10 +97,16 @@ fn run_check(args: &[String]) -> Result<i32, String> {
 fn run_snapshot(args: &[String]) -> Result<i32, String> {
     let parsed = parse_model_command(args, true)?;
     let out = parsed.out.as_deref().ok_or("--out is required")?;
-    let prepared = prepare_model(&parsed.model)?;
     let target = parsed.target.as_deref().ok_or("--target is required")?;
+    let prepared = match prepare_model(&parsed.model) {
+        Ok(prepared) => prepared,
+        Err(error) => return fail_with_execution_artifacts("snapshot", &parsed, &error),
+    };
     let report = if prepared.cli_adapter_output {
-        check_adapter_generated_model_with_suppressions(&prepared.path, target, &[])?
+        match check_adapter_generated_model_with_suppressions(&prepared.path, target, &[]) {
+            Ok(report) => report,
+            Err(error) => return fail_with_execution_artifacts("snapshot", &parsed, &error),
+        }
     } else {
         check_model(&prepared.path, target)?
     };
@@ -309,6 +321,78 @@ fn add_suppression_ids(value: &str, suppressions: &mut Vec<String>) {
     for id in value.split(',').map(str::trim).filter(|id| !id.is_empty()) {
         suppressions.push(id.to_string());
     }
+}
+
+fn fail_with_execution_artifacts(
+    command: &str,
+    parsed: &ModelCommand,
+    error: &str,
+) -> Result<i32, String> {
+    // 执行失败仍需保留机器可读证据，但不得伪装成已完成的模型分析报告。
+    if let Some(out) = parsed.out.as_deref() {
+        let format = if command == "snapshot" {
+            "json"
+        } else {
+            parsed.format.as_str()
+        };
+        let artifact = render_execution_error(command, &parsed.model, format, error);
+        write_or_print(&artifact, Some(out)).map_err(|write_error| {
+            format!("{error}; failed to write execution error: {write_error}")
+        })?;
+    }
+    if let Some(summary) = parsed.summary.as_deref() {
+        let artifact = render_execution_error(command, &parsed.model, "markdown", error);
+        write_or_print(&artifact, Some(summary)).map_err(|write_error| {
+            format!("{error}; failed to write execution error summary: {write_error}")
+        })?;
+    }
+    Err(error.to_string())
+}
+
+fn render_execution_error(command: &str, model: &str, format: &str, error: &str) -> String {
+    let command_json = json_string(command);
+    let model_json = json_string(model);
+    let message = json_string(error);
+    match format {
+        "json" => format!(
+            "{{\n  \"schema\": \"edgefit.execution_error.v1\",\n  \"status\": \"execution_error\",\n  \"command\": {command_json},\n  \"model\": {model_json},\n  \"message\": {message}\n}}\n"
+        ),
+        "sarif" => format!(
+            "{{\n  \"$schema\": \"https://json.schemastore.org/sarif-2.1.0.json\",\n  \"version\": \"2.1.0\",\n  \"runs\": [{{\n    \"tool\": {{\"driver\": {{\"name\": \"EdgeFit\", \"version\": \"{EDGEFIT_VERSION}\"}}}},\n    \"properties\": {{\"edgefitSchema\": \"edgefit.execution_error.v1\", \"edgefitStatus\": \"execution_error\"}},\n    \"results\": [{{\"ruleId\": \"EFEXECUTION\", \"level\": \"error\", \"message\": {{\"text\": {message}}}}}]\n  }}]\n}}\n"
+        ),
+        "markdown" => format!(
+            "# EdgeFit Execution Error\n\n**Schema:** `edgefit.execution_error.v1`  \n**Status:** `execution_error`  \n**Command:** `{}`  \n**Model:** `{}`\n\n## Error\n\n{}\n",
+            markdown_text(command),
+            markdown_text(model),
+            markdown_text(error),
+        ),
+        _ => format!("EdgeFit execution error: {error}\n"),
+    }
+}
+
+fn json_string(value: &str) -> String {
+    // 手工编码仅覆盖 JSON 字符串规则，避免为单一错误文档引入新的序列化依赖。
+    let mut out = String::with_capacity(value.len() + 2);
+    out.push('"');
+    for character in value.chars() {
+        match character {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\u{08}' => out.push_str("\\b"),
+            '\u{0c}' => out.push_str("\\f"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            value if value <= '\u{1f}' => out.push_str(&format!("\\u{:04x}", value as u32)),
+            value => out.push(value),
+        }
+    }
+    out.push('"');
+    out
+}
+
+fn markdown_text(value: &str) -> String {
+    value.replace('`', "\\`")
 }
 
 fn write_or_print(content: &str, path: Option<&str>) -> Result<(), String> {
