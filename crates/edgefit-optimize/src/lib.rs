@@ -179,7 +179,13 @@ pub fn optimize(model: &NormalizedModel, profile: &TargetProfile) -> EdgeFitResu
         blockers.push("latency_unknown".to_string());
     }
     let status = if blockers.is_empty() { "pass" } else { "fail" }.to_string();
-    let plan_hash = plan_fingerprint(&assignments, &segments, &simulation.events);
+    let plan_hash = plan_fingerprint(
+        &model.sha256,
+        &profile.fingerprint,
+        &assignments,
+        &segments,
+        &simulation.events,
+    );
 
     Ok(OptimizationPlan {
         schema: "edgefit.optimization_plan.v1".to_string(),
@@ -276,6 +282,8 @@ fn simulate_npu(
                         &mut transfer_ns,
                         &mut transfer_bytes,
                     );
+                } else {
+                    blockers.push(format!("node:{node_index} tensor:{input} scratchpad_unavailable"));
                 }
             }
             for output in node.outputs.iter().filter(|name| !name.is_empty()) {
@@ -603,9 +611,17 @@ fn ceil_mul_div(value: u64, multiplier: u64, divisor: u64) -> Option<u64> {
     u64::try_from(result).ok()
 }
 
-fn plan_fingerprint(assignments: &[NodeAssignment], segments: &[Segment], events: &[TransferEvent]) -> String {
+fn plan_fingerprint(
+    model_sha256: &str,
+    target_fingerprint: &str,
+    assignments: &[NodeAssignment],
+    segments: &[Segment],
+    events: &[TransferEvent],
+) -> String {
     let mut hash = 0xcbf2_9ce4_8422_2325_u64;
-    let text = format!("{assignments:?}{segments:?}{events:?}");
+    let text = format!(
+        "model={model_sha256};target={target_fingerprint};{assignments:?}{segments:?}{events:?}"
+    );
     for byte in text.as_bytes() {
         hash ^= u64::from(*byte);
         hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
@@ -695,6 +711,296 @@ mod tests {
         assert!(first.events.iter().any(|item| item.kind == "load"));
         assert!(first.events.iter().any(|item| item.kind == "store"));
         assert!(first.proposed_latency_ns < first.baseline_latency_ns);
+        let mut changed_profile = profile.clone();
+        changed_profile.fingerprint = "fnv1a64:changed-profile".to_string();
+        let changed_target = optimize(&model, &changed_profile).unwrap();
+        assert_ne!(first.plan_hash, changed_target.plan_hash);
+        let mut changed_model = model.clone();
+        changed_model.sha256 = "sha256:changed-model".to_string();
+        let changed_input = optimize(&changed_model, &profile).unwrap();
+        assert_ne!(first.plan_hash, changed_input.plan_hash);
+    }
+
+    #[test]
+    fn splits_npu_segments_around_a_cpu_assignment() {
+        let model = parse_model(&[
+            ("Relu", &["x"], &["a"]),
+            ("Add", &["a", "bias"], &["b"]),
+            ("Relu", &["b"], &["y"]),
+        ]);
+        let profile = parse_test_profile(262_144, true, 10_000, 1, 1);
+
+        let plan = optimize(&model, &profile).unwrap();
+
+        assert_eq!(plan.status, "pass");
+        assert_eq!(
+            plan.assignments.iter().map(|item| item.device.as_str()).collect::<Vec<_>>(),
+            vec!["npu", "cpu", "npu"]
+        );
+        assert_eq!(plan.segments.len(), 2);
+        assert_eq!((plan.segments[0].first_node, plan.segments[0].last_node), (0, 0));
+        assert_eq!((plan.segments[1].first_node, plan.segments[1].last_node), (2, 2));
+        assert_eq!(plan.assignments[1].device, "cpu");
+    }
+
+    #[test]
+    fn records_deterministic_spill_and_reload_events() {
+        let model = parse_model(&[
+            ("Relu", &["x"], &["a"]),
+            ("Relu", &["bias"], &["d"]),
+            ("Add", &["a", "d"], &["b"]),
+            ("Add", &["b", "d"], &["c"]),
+            ("Add", &["c", "a"], &["e"]),
+            ("Add", &["e", "d"], &["y"]),
+        ]);
+        let mut profile = parse_test_profile(3_072, true, 10_000, 1, 1);
+        profile
+            .allowed_ops
+            .get_mut(&("ai.onnx".to_string(), "Add".to_string()))
+            .unwrap()
+            .cpu_cost = None;
+
+        let first = optimize(&model, &profile).unwrap();
+        let second = optimize(&model, &profile).unwrap();
+        let kinds = first.events.iter().map(|event| event.kind.as_str()).collect::<Vec<_>>();
+
+        assert_eq!(first, second);
+        assert_eq!(first.status, "fail");
+        assert!(first.spill_bytes > 0);
+        assert!(kinds.contains(&"spill"));
+        assert!(first
+            .blockers
+            .iter()
+            .any(|blocker| blocker.contains("scratchpad_unavailable")));
+        assert!(first.peak_scratchpad_bytes <= 3_072);
+    }
+
+    #[test]
+    fn fails_when_spill_is_disabled() {
+        let model = parse_model(&[
+            ("Relu", &["x"], &["a"]),
+            ("Relu", &["bias"], &["d"]),
+            ("Add", &["a", "d"], &["b"]),
+            ("Add", &["b", "d"], &["c"]),
+            ("Add", &["c", "a"], &["y"]),
+        ]);
+        let mut profile = parse_test_profile(3_072, false, 10_000, 1, 1);
+        profile
+            .allowed_ops
+            .get_mut(&("ai.onnx".to_string(), "Add".to_string()))
+            .unwrap()
+            .cpu_cost = None;
+
+        let plan = optimize(&model, &profile).unwrap();
+
+        assert_eq!(plan.status, "fail");
+        assert!(plan
+            .blockers
+            .iter()
+            .any(|blocker| blocker.contains("scratchpad_unavailable")));
+    }
+
+    #[test]
+    fn applies_trusted_replacement_recipe() {
+        let model = parse_model(&[("HardSwish", &["x"], &["y"])]);
+        let profile = parse_test_profile(262_144, true, 10_000, 10_000, 1);
+
+        let plan = optimize(&model, &profile).unwrap();
+
+        assert_eq!(plan.status, "pass");
+        assert_eq!(plan.assignments[0].device, "npu");
+        assert_eq!(
+            plan.assignments[0].recipe_id.as_deref(),
+            Some("recipe.hardswish.v1")
+        );
+    }
+
+    #[test]
+    fn keeps_small_work_on_cpu_when_dma_cost_dominates() {
+        let model = parse_model(&[("Relu", &["x"], &["y"])]);
+        let profile = parse_test_profile(262_144, true, 1, 1, 100_000);
+
+        let plan = optimize(&model, &profile).unwrap();
+
+        assert_eq!(plan.status, "pass");
+        assert_eq!(plan.assignments[0].device, "cpu");
+        assert!(plan.segments.is_empty());
+        assert!(plan.events.is_empty());
+    }
+
+    fn parse_model(nodes: &[(&str, &[&str], &[&str])]) -> NormalizedModel {
+        let mut tensor_names = BTreeSet::new();
+        tensor_names.insert("x".to_string());
+        tensor_names.insert("bias".to_string());
+        for (_, inputs, outputs) in nodes {
+            tensor_names.extend(inputs.iter().map(|name| (*name).to_string()));
+            tensor_names.extend(outputs.iter().map(|name| (*name).to_string()));
+        }
+        let output = nodes
+            .last()
+            .and_then(|(_, _, outputs)| outputs.first())
+            .copied()
+            .unwrap();
+        let values = tensor_names
+            .iter()
+            .filter(|name| {
+                name.as_str() != "x" && name.as_str() != "bias" && name.as_str() != output
+            })
+            .map(|name| format!(r#"{{"name":"{name}","dtype":"int8","shape":[1,2048]}}"#))
+            .collect::<Vec<_>>()
+            .join(",");
+        let nodes = nodes
+            .iter()
+            .enumerate()
+            .map(|(index, (op_type, inputs, outputs))| {
+                let inputs = inputs
+                    .iter()
+                    .map(|name| format!(r#""{name}""#))
+                    .collect::<Vec<_>>()
+                    .join(",");
+                let outputs = outputs
+                    .iter()
+                    .map(|name| format!(r#""{name}""#))
+                    .collect::<Vec<_>>()
+                    .join(",");
+                format!(
+                    r#"{{"name":"node_{index}","domain":"ai.onnx","op_type":"{op_type}","inputs":[{inputs}],"outputs":[{outputs}]}}"#
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(",");
+        parse_normalized_model(&format!(
+            r#"{{"schema":"edgefit.normalized_model.v1","model":{{"path":"tests/optimizer.onnx","file_bytes":1,"sha256":"sha256:optimizer-test"}},"graph":{{"inputs":[{{"name":"x","dtype":"int8","shape":[1,2048]}},{{"name":"bias","dtype":"int8","shape":[1,2048]}}],"values":[{values}],"outputs":[{{"name":"{output}","dtype":"int8","shape":[1,2048]}}],"initializers":[],"nodes":[{nodes}]}}}}"#
+        ))
+        .unwrap()
+    }
+
+    fn parse_test_profile(
+        scratchpad_bytes: u64,
+        spill_allowed: bool,
+        relu_cpu_fixed_ns: u64,
+        add_cpu_fixed_ns: u64,
+        dma_setup_ns: u64,
+    ) -> TargetProfile {
+        parse_profile(
+            &format!(
+                r#"profile_version: edgefit.target.v1
+
+metadata:
+  source: EdgeFit optimizer unit-test simulation
+  confidence: seed
+  last_verified: 2026-07-12
+
+target:
+  id: optimizer_test
+  name: Optimizer Test
+  class: virtual-npu
+
+memory:
+  flash_bytes: 1048576
+  ram_bytes: 1048576
+  model_file_budget_bytes: 1048576
+  peak_activation_budget_bytes: 1048576
+  weights_residency: ram
+  tensor_alignment_bytes: 1
+
+runtime:
+  name: optimizer-test
+  static_shapes_required: true
+  dynamic_allocation_allowed: false
+  external_memory_allowed: true
+
+dtype:
+  allowed: [int8]
+  preferred: int8
+  fp32_allowed: false
+
+opsets:
+  ai.onnx: 18
+
+accelerator:
+  id: optimizer-test-npu
+  confidence: seed-simulated
+  scratchpad_bytes: {scratchpad_bytes}
+  tensor_alignment_bytes: 1
+  dma_burst_bytes: 1
+  dma_setup_ns: {dma_setup_ns}
+  dma_read_bytes_per_second: 1000000000
+  dma_write_bytes_per_second: 1000000000
+  spill_allowed: {spill_allowed}
+
+ops:
+  allow:
+    ai.onnx:
+      Relu:
+        dtypes: [int8]
+        cpu_cost:
+          id: cpu.relu.int8
+          kind: element
+          fixed_ns: {relu_cpu_fixed_ns}
+          throughput_per_second: 1000000000
+        npu_cost:
+          id: npu.relu.int8
+          kind: element
+          fixed_ns: 1
+          throughput_per_second: 1000000000
+      Add:
+        dtypes: [int8]
+        cpu_cost:
+          id: cpu.add.int8
+          kind: element
+          fixed_ns: {add_cpu_fixed_ns}
+          throughput_per_second: 1000000000
+        npu_cost:
+          id: npu.add.int8
+          kind: element
+          fixed_ns: 1
+          throughput_per_second: 1000000000
+      HardSigmoid:
+        dtypes: [int8]
+        npu_cost:
+          id: npu.hardsigmoid.int8
+          kind: element
+          fixed_ns: 1
+          throughput_per_second: 1000000000
+      Mul:
+        dtypes: [int8]
+        npu_cost:
+          id: npu.mul.int8
+          kind: element
+          fixed_ns: 1
+          throughput_per_second: 1000000000
+      HardSwish:
+        dtypes: [int8]
+        cpu_cost:
+          id: cpu.hardswish.int8
+          kind: element
+          fixed_ns: 10000
+          throughput_per_second: 1000000000
+
+recipes:
+  ai.onnx:
+    HardSwish:
+      id: recipe.hardswish.v1
+      trusted: true
+      source: EdgeFit optimizer unit-test simulation
+      version: 1
+      replacement_ops: [HardSigmoid, Mul]
+
+shape:
+  max_rank: 6
+  allow_unknown_dims: false
+
+quantization:
+  required: true
+  require_int8: true
+  min_quantized_weight_fraction: 1.0
+  min_operator_coverage: 1.0
+"#
+            ),
+            PathBuf::from("tests/optimizer-profile.yaml"),
+        )
+        .unwrap()
     }
 
     #[test]

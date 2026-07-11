@@ -12,12 +12,17 @@ so users can judge the trust level before wiring a profile into a gate.
 | `targets/ort-mobile-cpu.yaml` | `ort_mobile_cpu_seed_v1` | ORT mobile-like CPU gate for edge devices that allow fp32/int8 models, common ONNX vision operators, quantized operators, and detection post-processing operators | `seed` |
 | `targets/tflm-micro.yaml` | `tflm_micro_seed_v1` | Generic TFLM-like MCU gate for int8 static-shape models | `seed` |
 | `targets/virtual-npu.yaml` | `edgefit_virtual_npu_v1` | Simulated CPU/NPU optimization planning with declared kernel, DMA, alignment, and scratchpad costs | `seed`; accelerator `seed-simulated` |
+| `targets/virtual-npu-segmented.yaml` | `edgefit_virtual_npu_segmented_v1` | Test-only simulated CPU/NPU segment boundary evidence | `seed`; accelerator `seed-simulated` |
+| `targets/virtual-npu-small-scratchpad.yaml` | `edgefit_virtual_npu_small_scratchpad_v1` | Test-only simulated spill pressure and unresolved-capacity blocker evidence | `seed`; accelerator `seed-simulated` |
+| `targets/virtual-npu-no-spill.yaml` | `edgefit_virtual_npu_no_spill_v1` | Test-only fail-closed scratchpad pressure with spilling disabled | `seed`; accelerator `seed-simulated` |
 
 These profiles are seed templates. The verifier profiles make compatibility
 behavior reproducible and show how a repository should encode source,
 confidence, budgets, dtype rules, operator allowlists, and shape policy. The
-virtual NPU profile instead supplies simulated inputs to `edgefit optimize`; its
+virtual NPU profiles instead supply simulated inputs to `edgefit optimize`; their
 latency output is a profile-driven estimate, not measured hardware performance.
+The segmented, small-scratchpad, and no-spill variants are evidence fixtures
+only and must not be used as deployable target contracts.
 
 ## Source Boundary
 

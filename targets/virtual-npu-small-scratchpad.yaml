@@ -1,0 +1,81 @@
+profile_version: edgefit.target.v1
+
+# EdgeFit simulated virtual NPU profile for deterministic scratchpad pressure evidence.
+#
+# Values in this file are test assumptions. They are not measurements from physical hardware.
+
+metadata:
+  source: EdgeFit small-scratchpad optimizer simulation; test values only
+  confidence: seed
+  last_verified: 2026-07-12
+
+target:
+  id: edgefit_virtual_npu_small_scratchpad_v1
+  name: EdgeFit Generic Virtual NPU Small Scratchpad
+  class: virtual-npu
+
+memory:
+  flash_bytes: 16777216
+  ram_bytes: 8388608
+  model_file_budget_bytes: 16777216
+  peak_activation_budget_bytes: 8388608
+  weights_residency: ram
+  tensor_alignment_bytes: 64
+
+runtime:
+  name: edgefit-virtual-npu-small-scratchpad
+  static_shapes_required: true
+  dynamic_allocation_allowed: false
+  external_memory_allowed: true
+
+dtype:
+  allowed: [int8]
+  preferred: int8
+  fp32_allowed: false
+
+opsets:
+  ai.onnx: 18
+
+accelerator:
+  id: generic-npu-small-scratchpad-v1
+  confidence: seed-simulated
+  scratchpad_bytes: 3072
+  tensor_alignment_bytes: 64
+  dma_burst_bytes: 64
+  dma_setup_ns: 500
+  dma_read_bytes_per_second: 1000000000
+  dma_write_bytes_per_second: 800000000
+  spill_allowed: true
+
+ops:
+  allow:
+    ai.onnx:
+      Add:
+        dtypes: [int8]
+        npu_cost:
+          id: npu.add.int8
+          kind: element
+          fixed_ns: 300
+          throughput_per_second: 1000000000
+      Relu:
+        dtypes: [int8]
+        cpu_cost:
+          id: cpu.relu.int8
+          kind: element
+          fixed_ns: 2500
+          throughput_per_second: 70000000
+        npu_cost:
+          id: npu.relu.int8
+          kind: element
+          fixed_ns: 250
+          throughput_per_second: 1200000000
+
+shape:
+  max_rank: 6
+  allow_unknown_dims: false
+
+quantization:
+  required: true
+  require_int8: true
+  min_quantized_weight_fraction: 1.0
+  min_operator_coverage: 1.0

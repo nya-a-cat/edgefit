@@ -1,0 +1,183 @@
+{
+  "schema": "edgefit.competitive_benchmark_manifest.v1",
+  "corpus_manifest": "../onnx-normalize/real_world_corpus.json",
+  "corpus_cache": "../../tmp/real_world_corpus",
+  "default_target": "../../targets/virtual-npu.yaml",
+  "cases": [
+    {
+      "id": "optimizer-linear-1000",
+      "purpose": "Simulated 1K-node optimizer scale and deterministic plan evidence",
+      "tags": ["optimizer", "performance", "synthetic", "linear-chain", "1k", "simulated"],
+      "edgefit_command": "optimize",
+      "generated_model": {
+        "kind": "linear_op_chain",
+        "node_count": 1000,
+        "tensor_elements": 1024,
+        "dtype": "int8",
+        "op_type": "Relu"
+      },
+      "expectations": {
+        "max_edgefit_duration_ms": 30000,
+        "max_edgefit_peak_rss_bytes": 1073741824,
+        "require_deterministic_artifact": true,
+        "expected_plan_status": "pass",
+        "expected_plan_assignment_count": 1000,
+        "expected_plan_assignment_counts": {"npu": 1000},
+        "expected_plan_segment_count": 1,
+        "max_plan_spill_bytes": 0,
+        "min_plan_event_kind_counts": {"load": 1, "store": 1},
+        "max_plan_peak_scratchpad_bytes": 262144,
+        "expected_plan_blockers": [],
+        "expected_plan_recipe_ids": [],
+        "require_plan_latency_improvement": true
+      }
+    },
+    {
+      "id": "optimizer-linear-10000",
+      "purpose": "Required pull-request simulated optimizer performance smoke",
+      "tags": ["optimizer", "performance", "synthetic", "linear-chain", "10k", "pr-smoke", "simulated"],
+      "edgefit_command": "optimize",
+      "generated_model": {
+        "kind": "linear_op_chain",
+        "node_count": 10000,
+        "tensor_elements": 1024,
+        "dtype": "int8",
+        "op_type": "Relu"
+      },
+      "expectations": {
+        "max_edgefit_duration_ms": 60000,
+        "max_edgefit_peak_rss_bytes": 2147483648,
+        "require_deterministic_artifact": true,
+        "expected_plan_status": "pass",
+        "expected_plan_assignment_count": 10000,
+        "expected_plan_assignment_counts": {"npu": 10000},
+        "expected_plan_segment_count": 1,
+        "max_plan_spill_bytes": 0,
+        "min_plan_event_kind_counts": {"load": 1, "store": 1},
+        "max_plan_peak_scratchpad_bytes": 262144,
+        "expected_plan_blockers": [],
+        "expected_plan_recipe_ids": [],
+        "require_plan_latency_improvement": true
+      }
+    },
+    {
+      "id": "optimizer-linear-100000",
+      "purpose": "Simulated 100K-node optimizer scale evidence on a hosted runner",
+      "tags": ["optimizer", "performance", "synthetic", "linear-chain", "100k", "manual", "simulated"],
+      "edgefit_command": "optimize",
+      "generated_model": {
+        "kind": "linear_op_chain",
+        "node_count": 100000,
+        "tensor_elements": 1024,
+        "dtype": "int8",
+        "op_type": "Relu"
+      },
+      "expectations": {
+        "max_edgefit_duration_ms": 300000,
+        "max_edgefit_peak_rss_bytes": 4294967296,
+        "require_deterministic_artifact": true,
+        "expected_plan_status": "pass",
+        "expected_plan_assignment_count": 100000,
+        "expected_plan_assignment_counts": {"npu": 100000},
+        "expected_plan_segment_count": 1,
+        "max_plan_spill_bytes": 0,
+        "min_plan_event_kind_counts": {"load": 1, "store": 1},
+        "max_plan_peak_scratchpad_bytes": 262144,
+        "expected_plan_blockers": [],
+        "expected_plan_recipe_ids": [],
+        "require_plan_latency_improvement": true
+      }
+    },
+    {
+      "id": "optimizer-recipe-1000",
+      "purpose": "Trusted replacement recipe coverage at simulated optimizer scale",
+      "tags": ["optimizer", "recipe", "synthetic", "1k", "simulated"],
+      "edgefit_command": "optimize",
+      "generated_model": {
+        "kind": "linear_op_chain",
+        "node_count": 1000,
+        "tensor_elements": 1024,
+        "dtype": "int8",
+        "op_type": "HardSwish"
+      },
+      "expectations": {
+        "max_edgefit_duration_ms": 30000,
+        "max_edgefit_peak_rss_bytes": 1073741824,
+        "require_deterministic_artifact": true,
+        "expected_plan_status": "pass",
+        "expected_plan_assignment_count": 1000,
+        "expected_plan_assignment_counts": {"npu": 1000},
+        "expected_plan_segment_count": 1,
+        "max_plan_spill_bytes": 0,
+        "min_plan_event_kind_counts": {"load": 1, "store": 1},
+        "max_plan_peak_scratchpad_bytes": 262144,
+        "expected_plan_blockers": [],
+        "expected_plan_recipe_ids": ["recipe.hardswish.v1"],
+        "require_plan_latency_improvement": true
+      }
+    },
+    {
+      "id": "optimizer-segmented",
+      "purpose": "Deterministic CPU boundary and two-segment NPU assignment evidence",
+      "tags": ["optimizer", "partition", "cpu", "npu", "segments", "simulated"],
+      "edgefit_command": "optimize",
+      "target": "../../targets/virtual-npu-segmented.yaml",
+      "model_path": "../../examples/models/virtual_npu_segmented.edgefit.json",
+      "expectations": {
+        "require_deterministic_artifact": true,
+        "expected_plan_status": "pass",
+        "expected_plan_assignment_count": 3,
+        "expected_plan_assignment_counts": {"cpu": 1, "npu": 2},
+        "expected_plan_segment_count": 2,
+        "min_plan_event_kind_counts": {"load": 2, "store": 2},
+        "max_plan_spill_bytes": 0,
+        "max_plan_peak_scratchpad_bytes": 262144,
+        "expected_plan_blockers": [],
+        "expected_plan_recipe_ids": [],
+        "require_plan_latency_improvement": true
+      }
+    },
+    {
+      "id": "optimizer-spill-reload",
+      "purpose": "Deterministic simulated spill attempts with explicit capacity blockers",
+      "tags": ["optimizer", "scratchpad", "spill", "blocker", "simulated"],
+      "edgefit_command": "optimize",
+      "expected_edgefit_status": "tool_rejected",
+      "target": "../../targets/virtual-npu-small-scratchpad.yaml",
+      "model_path": "../../examples/models/virtual_npu_spill.edgefit.json",
+      "expectations": {
+        "require_deterministic_artifact": true,
+        "expected_plan_status": "fail",
+        "expected_plan_assignment_count": 6,
+        "expected_plan_assignment_counts": {"npu": 6},
+        "expected_plan_segment_count": 1,
+        "min_plan_event_kind_counts": {"load": 2, "spill": 1, "store": 1},
+        "min_plan_spill_bytes": 1,
+        "min_plan_transfer_bytes": 1,
+        "max_plan_peak_scratchpad_bytes": 3072,
+        "required_plan_blockers": ["node:2 tensor:a scratchpad_unavailable"],
+        "expected_plan_recipe_ids": []
+      }
+    },
+    {
+      "id": "optimizer-no-spill-blocker",
+      "purpose": "Fail-closed simulated scratchpad capacity evidence when spill is disabled",
+      "tags": ["optimizer", "scratchpad", "blocker", "no-spill", "simulated"],
+      "edgefit_command": "optimize",
+      "expected_edgefit_status": "tool_rejected",
+      "target": "../../targets/virtual-npu-no-spill.yaml",
+      "model_path": "../../examples/models/virtual_npu_spill.edgefit.json",
+      "expectations": {
+        "require_deterministic_artifact": true,
+        "expected_plan_status": "fail",
+        "expected_plan_assignment_count": 6,
+        "expected_plan_assignment_counts": {"npu": 6},
+        "expected_plan_segment_count": 1,
+        "max_plan_spill_bytes": 0,
+        "max_plan_peak_scratchpad_bytes": 3072,
+        "required_plan_blockers": ["node:2 scratchpad_exceeded", "node:2 tensor:a scratchpad_unavailable"],
+        "expected_plan_recipe_ids": []
+      }
+    }
+  ]
+}
