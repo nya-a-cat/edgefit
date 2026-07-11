@@ -1,0 +1,139 @@
+name: Release Action smoke
+
+on:
+  workflow_call:
+    inputs:
+      tag:
+        description: Published EdgeFit release tag to verify.
+        required: true
+        type: string
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Published EdgeFit release tag to verify.
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  normalized-json:
+    name: Release install with normalized JSON
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        repetition: [1, 2, 3, 4, 5]
+    steps:
+      - name: Check out the published tag
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ inputs.tag }}
+          persist-credentials: false
+      - name: Run the published Action
+        id: edgefit
+        uses: ./
+        with:
+          model: examples/models/good_tiny.edgefit.json
+          target: targets/esp32s3.yaml
+          report: release-normalized.sarif
+          summary: release-normalized.md
+          install-onnx: "false"
+      - name: Require release installation
+        shell: bash
+        env:
+          EDGEFIT_INSTALL_METHOD: ${{ steps.edgefit.outputs.install_method }}
+          EDGEFIT_INSTALL_DURATION_MS: ${{ steps.edgefit.outputs.install_duration_ms }}
+          REPETITION: ${{ matrix.repetition }}
+        run: |
+          test "$EDGEFIT_INSTALL_METHOD" = release
+          test "$EDGEFIT_INSTALL_DURATION_MS" -ge 0
+          printf '%s\n' "$EDGEFIT_INSTALL_DURATION_MS" > "install-duration-$REPETITION.txt"
+      - name: Upload normalized reports
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-action-normalized-reports-${{ matrix.repetition }}
+          path: |
+            release-normalized.sarif
+            release-normalized.md
+            install-duration-${{ matrix.repetition }}.txt
+          if-no-files-found: error
+
+  normalized-install-budget:
+    name: Release install median budget
+    needs: normalized-json
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download installation timings
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: release-action-normalized-reports-*
+          merge-multiple: true
+          path: timings
+      - name: Enforce five-run median
+        shell: bash
+        run: |
+          mapfile -t samples < <(sort -n timings/install-duration-*.txt)
+          test "${#samples[@]}" -eq 5
+          median="${samples[2]}"
+          printf 'Five-run release installation median: %s ms\n' "$median" >> "$GITHUB_STEP_SUMMARY"
+          test "$median" -le 10000
+
+  onnx:
+    name: Release install with ONNX
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the published tag
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ inputs.tag }}
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: tools/onnx-normalize/requirements.txt
+      - name: Create a minimal ONNX model
+        shell: bash
+        run: |
+          python -m pip install -r tools/onnx-normalize/requirements.txt
+          python - <<'PY'
+          from onnx import TensorProto, helper, save
+
+          left_info = helper.make_tensor_value_info("left", TensorProto.INT8, [1, 1])
+          right_info = helper.make_tensor_value_info("right", TensorProto.INT8, [1, 1])
+          output_info = helper.make_tensor_value_info("output", TensorProto.INT8, [1, 1])
+          node = helper.make_node("Add", ["left", "right"], ["output"], name="add_0")
+          graph = helper.make_graph(
+              [node], "release_smoke", [left_info, right_info], [output_info]
+          )
+          model = helper.make_model(graph, opset_imports=[helper.make_opsetid("", 13)])
+          model.ir_version = min(model.ir_version, 10)
+          save(model, "release-smoke.onnx")
+          PY
+      - name: Run the published Action
+        id: edgefit
+        uses: ./
+        with:
+          model: release-smoke.onnx
+          target: targets/esp32s3.yaml
+          report: release-onnx.sarif
+          summary: release-onnx.md
+          install-onnx: "true"
+      - name: Require release installation
+        shell: bash
+        env:
+          EDGEFIT_INSTALL_METHOD: ${{ steps.edgefit.outputs.install_method }}
+        run: test "$EDGEFIT_INSTALL_METHOD" = release
+      - name: Upload ONNX reports
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-action-onnx-reports
+          path: |
+            release-onnx.sarif
+            release-onnx.md
+          if-no-files-found: error

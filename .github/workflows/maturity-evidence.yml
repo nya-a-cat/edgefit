@@ -12,9 +12,17 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.12"
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master snapshot
+        with:
+          toolchain: 1.97.0
       - name: Build release CLI
         run: cargo build --workspace --release --locked
       - name: Run 1K, 10K and 100K node evidence
@@ -29,7 +37,7 @@ jobs:
       - name: Publish planner summary
         run: cat tmp/performance-evidence/competitive-benchmark.md >> "$GITHUB_STEP_SUMMARY"
       - name: Upload planner evidence
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: planner-scale-evidence
           path: |
@@ -43,11 +51,15 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master snapshot
+        with:
+          toolchain: 1.97.0
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
         with:
           python-version: "3.12"
           cache: pip
@@ -85,7 +97,7 @@ jobs:
       - name: Publish competitive summary
         run: cat tmp/competitive-evidence/competitive-benchmark.md >> "$GITHUB_STEP_SUMMARY"
       - name: Upload competitive evidence
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: competitive-matrix-evidence
           path: tmp/competitive-evidence/

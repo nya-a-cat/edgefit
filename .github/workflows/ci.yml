@@ -2,6 +2,8 @@ name: CI
 
 on:
   push:
+    branches:
+      - main
   pull_request:
 
 permissions:
@@ -20,11 +22,30 @@ jobs:
         os: [ubuntu-latest, windows-latest, macos-14]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master snapshot
+        with:
+          toolchain: 1.97.0
       - name: Run tests
         run: cargo test --workspace --locked
+
+  lint:
+    name: Rust Clippy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - name: Install Rust lint components
+        uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master snapshot
+        with:
+          toolchain: 1.97.0
+          components: clippy
+      - name: Run Clippy
+        run: cargo clippy --workspace --all-targets --locked -- --cap-lints warn
 
   python:
     name: ONNX adapter (${{ matrix.os }})
@@ -34,9 +55,11 @@ jobs:
         os: [ubuntu-latest, windows-latest, macos-14]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
         with:
           python-version: "3.12"
           cache: pip
@@ -52,9 +75,17 @@ jobs:
     name: Composite Action smoke
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - name: Install Rust for the repository-only source path
+        uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master snapshot
+        with:
+          toolchain: 1.97.0
       - name: Run the local EdgeFit Action
         uses: ./
+        env:
+          EDGEFIT_ALLOW_SOURCE_BUILD: "1"
         with:
           model: examples/models/good_tiny.edgefit.json
           target: targets/esp32s3.yaml
@@ -63,7 +94,7 @@ jobs:
           install-onnx: "false"
       - name: Upload smoke reports
         if: ${{ always() }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: edgefit-action-smoke
           path: |
@@ -75,9 +106,17 @@ jobs:
     name: Planner performance smoke
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.12"
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master snapshot
+        with:
+          toolchain: 1.97.0
       - name: Build release CLI
         run: cargo build --workspace --release --locked
       - name: Verify deterministic 10K-node planning
@@ -94,17 +133,19 @@ jobs:
   ci-gate:
     name: ci-gate
     if: ${{ always() }}
-    needs: [rust, python, action-smoke, performance-smoke]
+    needs: [rust, lint, python, action-smoke, performance-smoke]
     runs-on: ubuntu-latest
     steps:
       - name: Enforce required jobs
         env:
           RUST_RESULT: ${{ needs.rust.result }}
+          LINT_RESULT: ${{ needs.lint.result }}
           PYTHON_RESULT: ${{ needs.python.result }}
           ACTION_RESULT: ${{ needs.action-smoke.result }}
           PERFORMANCE_RESULT: ${{ needs.performance-smoke.result }}
         run: |
           test "$RUST_RESULT" = success
+          test "$LINT_RESULT" = success
           test "$PYTHON_RESULT" = success
           test "$ACTION_RESULT" = success
           test "$PERFORMANCE_RESULT" = success

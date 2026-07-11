@@ -15,7 +15,9 @@ jobs:
       image: espressif/idf:v5.5.4
       options: --user root
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
       - name: Install official QEMU runtime
         shell: bash
         run: |
@@ -41,7 +43,7 @@ jobs:
         run: cat tmp/espdl-qemu/evidence.md >> "$GITHUB_STEP_SUMMARY"
       - name: Upload simulation evidence
         if: ${{ always() }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: espdl-esp32s3-qemu-evidence
           path: |
