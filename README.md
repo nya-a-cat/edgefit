@@ -3,18 +3,23 @@
 [![CI](https://github.com/nya-a-cat/edgefit/actions/workflows/ci.yml/badge.svg)](https://github.com/nya-a-cat/edgefit/actions/workflows/ci.yml)
 
 EdgeFit statically verifies an ONNX model against an explicit deployment target
-contract. It reports graph compatibility, activation-memory planning, policy
-violations, and regression evidence through a CLI and GitHub Action.
+contract and can generate a deterministic, hardware-aware optimization plan. It
+reports graph compatibility, activation-memory planning, policy violations,
+regression evidence, and profile-driven CPU/NPU partition estimates through the
+Rust CLI and Python API; the verifier is also available as a GitHub Action.
 
 ```text
 model.onnx + target profile
             ↓
-  graph facts · memory plan · policy
-            ↓
- pass / fail + JSON · Markdown · SARIF
+ graph facts · memory plan · policy ──→ pass / fail + JSON · Markdown · SARIF
+            │
+            └─ accelerator contract ──→ assignments · NPU segments · DMA/spill
+                                        + estimated latency · plan hash
 ```
 
-EdgeFit is not an inference runtime or a device benchmark.
+EdgeFit is not an inference runtime, compiler, or device benchmark. Optimization
+latency is a profile-driven estimate, not measured hardware performance, and a
+successful plan does not establish real-device deployment compatibility.
 
 ## Scope
 
@@ -37,15 +42,21 @@ cargo build -p edgefit-cli --release --locked
 ./target/release/edgefit check \
   examples/models/good_tiny.edgefit.json \
   --target targets/esp32s3.yaml
+
+./target/release/edgefit optimize \
+  examples/models/virtual_npu_tiny.edgefit.json \
+  --target targets/virtual-npu.yaml \
+  --format json \
+  --out edgefit-plan.json
 ```
 
 Exit codes are part of the public CLI contract:
 
 | Code | Meaning |
 | ---: | --- |
-| `0` | Analysis completed and the model fits the target contract. |
-| `1` | Analysis completed and produced a deployment-blocking decision. |
-| `2` | Input, configuration, adapter, or invocation failure. |
+| `0` | Verification or planning completed without an unresolved blocker. |
+| `1` | Verification or planning completed with a deployment-blocking decision. |
+| `2` | Input, configuration, adapter, or invocation failure prevented a trustworthy result. |
 
 ### Check a real ONNX model
 
@@ -70,8 +81,18 @@ not depend on Python packages.
 
 ### Python framework
 
-The optional Python package uses a prebuilt PyO3 extension over the same Rust
-engine. It does not compile Rust source during import:
+Prebuilt Python 3.10+ wheels for Linux x86_64, Windows x86_64, and macOS
+universal2 are attached to the
+[`v0.3.0-alpha.1` GitHub Release](https://github.com/nya-a-cat/edgefit/releases/tag/v0.3.0-alpha.1).
+Download the wheel matching the current platform, verify it with the release
+`SHA256SUMS`, and install that local file; EdgeFit is not published on PyPI:
+
+```bash
+python -m pip install ./edgefit-0.3.0a1-cp310-abi3-<platform>.whl
+```
+
+The package uses a prebuilt PyO3 extension over the same Rust engine. It does
+not compile Rust source during import:
 
 ```python
 import edgefit
@@ -98,7 +119,7 @@ jobs:
       security-events: write
     steps:
       - uses: actions/checkout@v7
-      - uses: nya-a-cat/edgefit@v0.2.0-alpha.3
+      - uses: nya-a-cat/edgefit@v0.3.0-alpha.1
         with:
           model: models/model.onnx
           target: targets/device.yaml
@@ -106,7 +127,7 @@ jobs:
           summary: edgefit-summary.md
 ```
 
-`v0.2.0-alpha.3` is a prerelease intended for reproducible evaluation. Until a
+`v0.3.0-alpha.1` is a prerelease intended for reproducible evaluation. Until a
 stable tag is published, pin long-lived or production workflows to a reviewed
 full commit SHA. On Linux x86_64, the Action downloads the matching release
 archive and verifies it against the published `SHA256SUMS`; it does not install
@@ -134,6 +155,7 @@ claims:
 | `targets/esp32s3.yaml` | Strict MCU-style budget review |
 | `targets/tflm-micro.yaml` | TensorFlow Lite Micro-like review |
 | `targets/ort-mobile-cpu.yaml` | ONNX Runtime Mobile CPU-like review |
+| `targets/virtual-npu.yaml` | Simulated CPU/NPU optimization seed; costs and latency are not hardware measurements |
 
 Project-specific profiles should live with the consuming repository and record their
 source, confidence, and last verification date. See
@@ -201,10 +223,12 @@ dependency. See [Architecture](docs/ARCHITECTURE.md) and
 
 ## Limitations
 
-- Checked-in targets are seed profiles and require project-specific validation.
+- Checked-in targets are seed profiles and require project-specific validation;
+  `targets/virtual-npu.yaml` is explicitly simulated.
 - Hosted timings measure complete CLI processes, not device inference.
-- Passing CI does not establish firmware, runtime, power, or real-device memory
-  compatibility.
+- Optimizer latency is derived from profile costs, not measured on hardware.
+- Passing verification or optimization planning does not establish firmware,
+  runtime, power, or real-device memory compatibility.
 - Direct ONNX normalization rejects nested subgraphs, local functions, and sparse
   initializers instead of partially analyzing them.
 
