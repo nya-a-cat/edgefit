@@ -6,7 +6,11 @@ normalization, explicit profile loading, batch execution, and report handling.
 
 The supported development and packaging path is PyO3 with maturin. EdgeFit does
 not compile Rust source during Python import and does not require `rustimport`.
-Published Rust CLI archives remain independent from the Python package.
+Prebuilt Python 3.10+ wheels for Linux x86_64, Windows x86_64, and macOS
+universal2 are attached to the `v0.3.0-alpha.1` GitHub Release; download the
+matching wheel, verify it against `SHA256SUMS`, and install the local file.
+EdgeFit is not published on PyPI. Published Rust CLI archives remain independent
+from the Python package.
 
 ```python
 import edgefit

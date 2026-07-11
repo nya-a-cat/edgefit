@@ -25,7 +25,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - name: Run EdgeFit
-        uses: nya-a-cat/edgefit@v0.2.0-alpha.3
+        uses: nya-a-cat/edgefit@v0.3.0-alpha.1
         with:
           model: models/model.onnx
           target: targets/esp32s3.yaml
@@ -39,7 +39,7 @@ jobs:
           sarif_file: edgefit.sarif
 ```
 
-`v0.2.0-alpha.3` is a prerelease intended for reproducible evaluation. Until a
+`v0.3.0-alpha.1` is a prerelease intended for reproducible evaluation. Until a
 stable tag is published, pin long-lived or production workflows to a reviewed
 full commit SHA rather than following `main` or a movable branch.
 
@@ -91,6 +91,8 @@ confidence, and last-verified metadata. The action validates the profile before
 checking the model so CI fails early when the target contract is incomplete.
 
 The repository includes `targets/esp32s3.yaml`, `targets/ort-mobile-cpu.yaml`,
-and `targets/tflm-micro.yaml` as seed profile templates. See
-`docs/TARGET_PROFILES.md` for their intended use, source boundary, and local
-validation commands.
+and `targets/tflm-micro.yaml` as verifier seed profile templates. The separate
+`targets/virtual-npu.yaml` profile is a simulated optimization seed; its kernel
+costs and latency estimates are not hardware measurements. See
+`docs/TARGET_PROFILES.md` and `docs/HARDWARE_OPTIMIZER.md` for their intended
+use and source boundaries.

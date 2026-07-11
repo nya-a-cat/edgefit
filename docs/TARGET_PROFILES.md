@@ -11,10 +11,13 @@ so users can judge the trust level before wiring a profile into a gate.
 | `targets/esp32s3.yaml` | `esp32s3_custom_v1` | Strict static-shape int8 MCU gate for an ESP32-S3-style board | `seed` |
 | `targets/ort-mobile-cpu.yaml` | `ort_mobile_cpu_seed_v1` | ORT mobile-like CPU gate for edge devices that allow fp32/int8 models, common ONNX vision operators, quantized operators, and detection post-processing operators | `seed` |
 | `targets/tflm-micro.yaml` | `tflm_micro_seed_v1` | Generic TFLM-like MCU gate for int8 static-shape models | `seed` |
+| `targets/virtual-npu.yaml` | `edgefit_virtual_npu_v1` | Simulated CPU/NPU optimization planning with declared kernel, DMA, alignment, and scratchpad costs | `seed`; accelerator `seed-simulated` |
 
-These profiles are seed templates. Their job is to make verifier behavior
-reproducible during MVP work and to show how a repository should encode source,
-confidence, budgets, dtype rules, operator allowlists, and shape policy.
+These profiles are seed templates. The verifier profiles make compatibility
+behavior reproducible and show how a repository should encode source,
+confidence, budgets, dtype rules, operator allowlists, and shape policy. The
+virtual NPU profile instead supplies simulated inputs to `edgefit optimize`; its
+latency output is a profile-driven estimate, not measured hardware performance.
 
 ## Source Boundary
 
@@ -23,7 +26,9 @@ profile trust is a product risk. The checked-in profiles follow that boundary:
 the strict MCU seed and generic TFLM-like seed keep narrow int8/static-shape
 contracts, while the ORT mobile-like seed uses a broader operator, dtype, and
 memory policy for CI experimentation. Their metadata keeps the confidence at
-`seed`.
+`seed`. The virtual NPU profile is an EdgeFit-authored simulation contract with
+`accelerator.confidence: seed-simulated`; it is not evidence for a physical NPU,
+compiler, runtime, or deployable device configuration.
 
 The ONNX Runtime reduced operator config documentation shows that constrained
 mobile and web builds can be represented by an operator set. EdgeFit uses that
@@ -67,11 +72,13 @@ ops:
   exclusive slot ownership, sufficient capacity, and a non-graph-boundary
   source tensor.
 
-The checked-in seed profiles intentionally omit these fields. Their effective
-values remain alignment `1`, workspace `0`, and no in-place reuse because no
-target-specific runtime evidence has been reviewed yet. Add non-default values
-only from a concrete runtime/kernel contract; guessed values would make a RAM
-budget pass look more certain than it is.
+The three verifier seed profiles intentionally omit these fields. Their
+effective values remain alignment `1`, workspace `0`, and no in-place reuse
+because no target-specific runtime evidence has been reviewed yet. The virtual
+NPU profile declares simulated alignment and cost inputs only for optimization
+planning. Add deployable values only from a concrete runtime/kernel contract;
+guessed values would make a RAM budget or latency estimate look more certain
+than it is.
 
 Operator rules may also narrow dtype by zero-based port and constrain captured
 ONNX attributes:
@@ -111,11 +118,12 @@ opsets:
 
 An adapter-generated model that exceeds a declared cap fails with `EF0204`.
 When no cap is declared for a used domain, `EF0205` fails closed so the profile
-cannot silently claim runtime-version compatibility. The checked-in profiles
-use conservative caps matching the current reviewed corpus boundary
-(`ai.onnx: 13`, plus `com.microsoft: 1` for the ORT seed); those values are not
-claims about each runtime's full capability. Raise them only after reviewing the
-actual deployment runtime.
+cannot silently claim runtime-version compatibility. The verifier profiles use
+conservative caps matching the current reviewed corpus boundary (`ai.onnx: 13`,
+plus `com.microsoft: 1` for the ORT seed). The virtual NPU seed uses
+`ai.onnx: 18` as a simulated optimizer-fixture boundary. None of these values
+claims a runtime's full capability; raise a deployable profile cap only after
+reviewing the actual deployment runtime.
 
 ## Local Validation
 
@@ -123,7 +131,9 @@ actual deployment runtime.
 cargo run -p edgefit-cli -- target validate targets/esp32s3.yaml
 cargo run -p edgefit-cli -- target validate targets/ort-mobile-cpu.yaml
 cargo run -p edgefit-cli -- target validate targets/tflm-micro.yaml
+cargo run -p edgefit-cli -- target validate targets/virtual-npu.yaml
 cargo run -p edgefit-cli -- check examples/models/bad_detector.edgefit.json --target targets/ort-mobile-cpu.yaml
+cargo run -p edgefit-cli -- optimize examples/models/virtual_npu_tiny.edgefit.json --target targets/virtual-npu.yaml --format json
 ```
 
 The detector fixture fails under strict MCU-style seed profiles and passes under
