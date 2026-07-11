@@ -1,8 +1,10 @@
 ﻿# GitHub Action Usage
 
 EdgeFit is intended to run as a pull request gate for ONNX deployment budgets.
-The action builds the EdgeFit CLI, validates the target profile, writes a SARIF
-report, and appends the Markdown summary to the GitHub job summary.
+The action downloads the matching EdgeFit release archive, verifies its SHA256
+checksum, validates the target profile, writes a SARIF report, and appends the
+Markdown summary to the GitHub job summary. It does not install Rust or build
+the CLI in caller workflows.
 
 ## Workflow
 
@@ -21,9 +23,9 @@ jobs:
       contents: read
       security-events: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Run EdgeFit
-        uses: nya-a-cat/edgefit@v0.2.0-alpha.1
+        uses: nya-a-cat/edgefit@v0.2.0-alpha.2
         with:
           model: models/model.onnx
           target: targets/esp32s3.yaml
@@ -32,12 +34,12 @@ jobs:
           # suppressions: EF0104,EF0203
       - name: Upload SARIF
         if: ${{ always() && hashFiles('edgefit.sarif') != '' }}
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@v4
         with:
           sarif_file: edgefit.sarif
 ```
 
-`v0.2.0-alpha.1` is a prerelease intended for reproducible evaluation. Until a
+`v0.2.0-alpha.2` is a prerelease intended for reproducible evaluation. Until a
 stable tag is published, pin long-lived or production workflows to a reviewed
 full commit SHA rather than following `main` or a movable branch.
 
@@ -46,7 +48,10 @@ Use `suppressions` for accepted diagnostics that should remain visible in the
 Markdown and JSON reports while allowing the current check to pass. A later
 snapshot/report diff still blocks newly introduced suppressed errors.
 
-The composite Action is designed for Linux/bash runners. It records the CLI
+The composite Action is designed for Linux x86_64 bash runners. The requested
+Action ref must resolve to a matching GitHub Release containing the Linux
+archive and `SHA256SUMS`; missing or mismatched release assets fail closed.
+The Action records the CLI
 exit status, publishes any SARIF/Markdown files first, then restores the gate
 failure. This keeps a non-compliant model reviewable instead of skipping the
 summary when `edgefit check` exits with `1`.
@@ -55,6 +60,8 @@ summary when `edgefit check` exits with `1`.
 
 - `edgefit.sarif` contains SARIF 2.1.0 diagnostics for GitHub code scanning, including EdgeFit logical locations and stable fingerprints.
 - `edgefit-summary.md` contains the same report as GitHub-flavored Markdown.
+- The `install_method` Action output is `release` for the public checksum-verified path.
+- The `install_duration_ms` Action output records binary installation time for delivery checks.
 - The composite action appends the Markdown report to `$GITHUB_STEP_SUMMARY`.
 - Suppressed diagnostics stay in a dedicated report section and are excluded from SARIF alerts.
 - On fork pull requests without `security-events: write`, keep the normal gate

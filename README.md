@@ -82,8 +82,8 @@ jobs:
       contents: read
       security-events: write
     steps:
-      - uses: actions/checkout@v4
-      - uses: nya-a-cat/edgefit@v0.2.0-alpha.1
+      - uses: actions/checkout@v7
+      - uses: nya-a-cat/edgefit@v0.2.0-alpha.2
         with:
           model: models/model.onnx
           target: targets/device.yaml
@@ -91,12 +91,14 @@ jobs:
           summary: edgefit-summary.md
 ```
 
-`v0.2.0-alpha.1` is a prerelease intended for reproducible evaluation. Until a
+`v0.2.0-alpha.2` is a prerelease intended for reproducible evaluation. Until a
 stable tag is published, pin long-lived or production workflows to a reviewed
-full commit SHA. The Action validates the target, runs the check, publishes the
-Markdown job summary, and then restores the EdgeFit exit status. See
-[GitHub Action usage](docs/GITHUB_ACTION_USAGE.md) for SARIF upload,
-suppression, and fork-PR handling.
+full commit SHA. On Linux x86_64, the Action downloads the matching release
+archive and verifies it against the published `SHA256SUMS`; it does not install
+Rust or compile EdgeFit in the caller workflow. The Action validates the target,
+runs the check, publishes the Markdown job summary, and then restores the
+EdgeFit exit status. See [GitHub Action usage](docs/GITHUB_ACTION_USAGE.md) for
+SARIF upload, suppression, and fork-PR handling.
 
 ## What Gets Verified
 

@@ -1,5 +1,5 @@
 name: EdgeFit
-description: Run EdgeFit deployment-budget verification in CI on Linux bash runners.
+description: Run EdgeFit deployment-budget verification in CI on Linux x86_64 runners.
 
 inputs:
   model:
@@ -25,37 +25,122 @@ inputs:
     required: false
     default: "true"
 
+outputs:
+  install_method:
+    description: Installation path selected by the Action (release or source).
+    value: ${{ steps.install.outputs.install_method }}
+  install_duration_ms:
+    description: Wall-clock time spent installing the EdgeFit binary.
+    value: ${{ steps.install.outputs.install_duration_ms }}
+
 runs:
   using: composite
   steps:
-    - name: Install Rust
-      uses: dtolnay/rust-toolchain@stable
-    - name: Set up Python for ONNX input
-      if: ${{ inputs.install-onnx == 'true' }}
-      uses: actions/setup-python@v5
-      with:
-        python-version: "3.x"
-    - name: Build EdgeFit
+    - name: Install verified EdgeFit binary
+      id: install
       shell: bash
       env:
-        CARGO_TARGET_DIR: ${{ runner.temp }}/edgefit-target
-      run: cargo build --manifest-path "$GITHUB_ACTION_PATH/Cargo.toml" -p edgefit-cli --release
+        EDGEFIT_ACTION_REPOSITORY: ${{ github.action_repository }}
+        EDGEFIT_ALLOW_SOURCE_BUILD: ${{ env.EDGEFIT_ALLOW_SOURCE_BUILD }}
+      run: |
+        set -euo pipefail
+
+        install_started_ms="$(date +%s%3N)"
+        install_root="${RUNNER_TEMP}/edgefit-action"
+        binary_dir="$install_root/bin"
+        repository="${EDGEFIT_ACTION_REPOSITORY:-$GITHUB_REPOSITORY}"
+        mkdir -p "$binary_dir"
+
+        if [[ "$EDGEFIT_ALLOW_SOURCE_BUILD" == "1" ]]; then
+          if [[ "$GITHUB_REPOSITORY" != "$repository" ]]; then
+            echo "EDGEFIT_ALLOW_SOURCE_BUILD is restricted to the EdgeFit repository workflow." >&2
+            exit 1
+          fi
+          cargo_target_dir="${RUNNER_TEMP}/edgefit-source-target"
+          CARGO_TARGET_DIR="$cargo_target_dir" cargo build \
+            --manifest-path "$GITHUB_ACTION_PATH/Cargo.toml" \
+            -p edgefit-cli \
+            --release \
+            --locked
+          binary="$cargo_target_dir/release/edgefit"
+          install_method="source"
+        else
+          if [[ "$RUNNER_OS" != "Linux" || "$RUNNER_ARCH" != "X64" ]]; then
+            echo "EdgeFit Action release installation supports only Linux x86_64 runners." >&2
+            exit 1
+          fi
+
+          version="$(sed -n 's/^version = "\(.*\)"/\1/p' "$GITHUB_ACTION_PATH/Cargo.toml" | head -n 1)"
+          if [[ -z "$version" ]]; then
+            echo "Unable to read the EdgeFit workspace version." >&2
+            exit 1
+          fi
+
+          tag="v$version"
+          archive="edgefit-$version-linux-x86_64.tar.gz"
+          release_url="https://github.com/$repository/releases/download/$tag"
+          download_dir="$install_root/download"
+          extract_dir="$install_root/extract"
+          mkdir -p "$download_dir" "$extract_dir"
+
+          curl --fail --location --retry 3 --retry-all-errors \
+            --output "$download_dir/$archive" \
+            "$release_url/$archive"
+          curl --fail --location --retry 3 --retry-all-errors \
+            --output "$download_dir/SHA256SUMS" \
+            "$release_url/SHA256SUMS"
+
+          checksum="$(awk -v name="$archive" '$2 == name { print $1 }' "$download_dir/SHA256SUMS")"
+          if [[ ! "$checksum" =~ ^[0-9a-fA-F]{64}$ ]]; then
+            echo "SHA256SUMS does not contain exactly one valid checksum for $archive." >&2
+            exit 1
+          fi
+          printf '%s  %s\n' "$checksum" "$archive" | (cd "$download_dir" && sha256sum --check --strict -)
+
+          tar -xzf "$download_dir/$archive" -C "$extract_dir"
+          mapfile -t binaries < <(find "$extract_dir" -type f -name edgefit)
+          if [[ "${#binaries[@]}" -ne 1 ]]; then
+            echo "Release archive must contain exactly one EdgeFit binary." >&2
+            exit 1
+          fi
+          install -m 0755 "${binaries[0]}" "$binary_dir/edgefit"
+          binary="$binary_dir/edgefit"
+          install_method="release"
+        fi
+
+        "$binary" --version
+        install_finished_ms="$(date +%s%3N)"
+        install_duration_ms="$((install_finished_ms - install_started_ms))"
+        printf 'binary=%s\n' "$binary" >> "$GITHUB_OUTPUT"
+        printf 'install_method=%s\n' "$install_method" >> "$GITHUB_OUTPUT"
+        printf 'install_duration_ms=%s\n' "$install_duration_ms" >> "$GITHUB_OUTPUT"
+        echo "EdgeFit install_method=$install_method"
+
+    - name: Set up Python 3.12 for ONNX input
+      if: ${{ inputs.install-onnx == 'true' }}
+      uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+      with:
+        python-version: "3.12"
+        cache: pip
+        cache-dependency-path: ${{ github.action_path }}/tools/onnx-normalize/requirements.txt
+
     - name: Install ONNX adapter dependency
       if: ${{ inputs.install-onnx == 'true' }}
       shell: bash
       run: python -m pip install -r "$GITHUB_ACTION_PATH/tools/onnx-normalize/requirements.txt"
+
     - name: Validate target
       shell: bash
       env:
-        CARGO_TARGET_DIR: ${{ runner.temp }}/edgefit-target
+        EDGEFIT_BINARY: ${{ steps.install.outputs.binary }}
         EDGEFIT_TARGET: ${{ inputs.target }}
-      run: |
-        "$CARGO_TARGET_DIR/release/edgefit" target validate "$EDGEFIT_TARGET"
+      run: '"$EDGEFIT_BINARY" target validate "$EDGEFIT_TARGET"'
+
     - name: Run EdgeFit
       id: edgefit
       shell: bash
       env:
-        CARGO_TARGET_DIR: ${{ runner.temp }}/edgefit-target
+        EDGEFIT_BINARY: ${{ steps.install.outputs.binary }}
         EDGEFIT_MODEL: ${{ inputs.model }}
         EDGEFIT_TARGET: ${{ inputs.target }}
         EDGEFIT_REPORT: ${{ inputs.report }}
@@ -64,22 +149,24 @@ runs:
       run: |
         set +e
         edgefit_args=(check "$EDGEFIT_MODEL" --target "$EDGEFIT_TARGET" --format sarif --out "$EDGEFIT_REPORT" --summary "$EDGEFIT_SUMMARY")
-        if [ -n "$EDGEFIT_SUPPRESSIONS" ]; then
+        if [[ -n "$EDGEFIT_SUPPRESSIONS" ]]; then
           edgefit_args+=(--suppress "$EDGEFIT_SUPPRESSIONS")
         fi
-        "$CARGO_TARGET_DIR/release/edgefit" "${edgefit_args[@]}"
+        "$EDGEFIT_BINARY" "${edgefit_args[@]}"
         edgefit_exit=$?
         printf 'exit_code=%s\n' "$edgefit_exit" >> "$GITHUB_OUTPUT"
         exit 0
+
     - name: Publish job summary
       if: ${{ always() }}
       shell: bash
       env:
         EDGEFIT_SUMMARY: ${{ inputs.summary }}
       run: |
-        if [ -n "${GITHUB_STEP_SUMMARY:-}" ] && [ -f "$EDGEFIT_SUMMARY" ]; then
+        if [[ -n "${GITHUB_STEP_SUMMARY:-}" && -f "$EDGEFIT_SUMMARY" ]]; then
           cat "$EDGEFIT_SUMMARY" >> "$GITHUB_STEP_SUMMARY"
         fi
+
     - name: Enforce EdgeFit result
       if: ${{ always() }}
       shell: bash
