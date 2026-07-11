@@ -83,7 +83,7 @@ jobs:
       security-events: write
     steps:
       - uses: actions/checkout@v7
-      - uses: nya-a-cat/edgefit@v0.2.0-alpha.2
+      - uses: nya-a-cat/edgefit@v0.2.0-alpha.2.1
         with:
           model: models/model.onnx
           target: targets/device.yaml
@@ -91,7 +91,7 @@ jobs:
           summary: edgefit-summary.md
 ```
 
-`v0.2.0-alpha.2` is a prerelease intended for reproducible evaluation. Until a
+`v0.2.0-alpha.2.1` is a prerelease intended for reproducible evaluation. Until a
 stable tag is published, pin long-lived or production workflows to a reviewed
 full commit SHA. On Linux x86_64, the Action downloads the matching release
 archive and verifies it against the published `SHA256SUMS`; it does not install

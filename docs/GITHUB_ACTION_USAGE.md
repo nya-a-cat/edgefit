@@ -25,7 +25,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - name: Run EdgeFit
-        uses: nya-a-cat/edgefit@v0.2.0-alpha.2
+        uses: nya-a-cat/edgefit@v0.2.0-alpha.2.1
         with:
           model: models/model.onnx
           target: targets/esp32s3.yaml
@@ -39,7 +39,7 @@ jobs:
           sarif_file: edgefit.sarif
 ```
 
-`v0.2.0-alpha.2` is a prerelease intended for reproducible evaluation. Until a
+`v0.2.0-alpha.2.1` is a prerelease intended for reproducible evaluation. Until a
 stable tag is published, pin long-lived or production workflows to a reviewed
 full commit SHA rather than following `main` or a movable branch.
 
