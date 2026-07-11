@@ -1,0 +1,45 @@
+{
+  "schema": "edgefit.normalized_model.v1",
+  "model": {
+    "path": "models/virtual_npu_segmented.onnx",
+    "file_bytes": 640,
+    "sha256": "sha256:virtual-npu-segmented"
+  },
+  "graph": {
+    "inputs": [
+      { "name": "x", "dtype": "int8", "shape": [1, 2048] },
+      { "name": "bias", "dtype": "int8", "shape": [1, 2048] }
+    ],
+    "values": [
+      { "name": "a", "dtype": "int8", "shape": [1, 2048] },
+      { "name": "b", "dtype": "int8", "shape": [1, 2048] }
+    ],
+    "outputs": [
+      { "name": "y", "dtype": "int8", "shape": [1, 2048] }
+    ],
+    "initializers": [],
+    "nodes": [
+      {
+        "name": "relu_0",
+        "domain": "ai.onnx",
+        "op_type": "Relu",
+        "inputs": ["x"],
+        "outputs": ["a"]
+      },
+      {
+        "name": "add_cpu",
+        "domain": "ai.onnx",
+        "op_type": "Add",
+        "inputs": ["a", "bias"],
+        "outputs": ["b"]
+      },
+      {
+        "name": "relu_1",
+        "domain": "ai.onnx",
+        "op_type": "Relu",
+        "inputs": ["b"],
+        "outputs": ["y"]
+      }
+    ]
+  }
+}

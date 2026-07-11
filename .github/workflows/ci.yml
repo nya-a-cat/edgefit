@@ -129,7 +129,7 @@ jobs:
           if-no-files-found: error
 
   performance-smoke:
-    name: Planner performance smoke
+    name: Activation planner performance smoke
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -156,10 +156,45 @@ jobs:
             --measure-peak-rss \
             --out-dir tmp/performance-smoke
 
+  optimizer-performance-smoke:
+    name: Optimizer performance smoke
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.12"
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master snapshot
+        with:
+          toolchain: 1.97.0
+      - name: Build release CLI
+        run: cargo build --workspace --release --locked
+      - name: Verify deterministic 10K-node simulated optimization
+        run: |
+          python tools/competitive-benchmark/benchmark.py \
+            --manifest tools/competitive-benchmark/optimizer_evidence_manifest.json \
+            --edgefit target/release/edgefit \
+            --tools edgefit \
+            --case-id optimizer-linear-10000 \
+            --edgefit-repetitions 3 \
+            --measure-peak-rss \
+            --out-dir tmp/optimizer-performance-smoke
+      - name: Upload optimizer smoke evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: edgefit-optimizer-performance-smoke
+          path: tmp/optimizer-performance-smoke/
+          if-no-files-found: error
+
   ci-gate:
     name: ci-gate
     if: ${{ always() }}
-    needs: [rust, lint, python, python_framework, action-smoke, performance-smoke]
+    needs: [rust, lint, python, python_framework, action-smoke, performance-smoke, optimizer-performance-smoke]
     runs-on: ubuntu-latest
     steps:
       - name: Enforce required jobs
@@ -170,6 +205,7 @@ jobs:
           PYTHON_FRAMEWORK_RESULT: ${{ needs.python_framework.result }}
           ACTION_RESULT: ${{ needs.action-smoke.result }}
           PERFORMANCE_RESULT: ${{ needs.performance-smoke.result }}
+          OPTIMIZER_PERFORMANCE_RESULT: ${{ needs.optimizer-performance-smoke.result }}
         run: |
           test "$RUST_RESULT" = success
           test "$LINT_RESULT" = success
@@ -177,3 +213,4 @@ jobs:
           test "$PYTHON_FRAMEWORK_RESULT" = success
           test "$ACTION_RESULT" = success
           test "$PERFORMANCE_RESULT" = success
+          test "$OPTIMIZER_PERFORMANCE_RESULT" = success

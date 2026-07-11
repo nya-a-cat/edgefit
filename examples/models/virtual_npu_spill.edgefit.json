@@ -1,0 +1,69 @@
+{
+  "schema": "edgefit.normalized_model.v1",
+  "model": {
+    "path": "models/virtual_npu_spill.onnx",
+    "file_bytes": 768,
+    "sha256": "sha256:virtual-npu-spill"
+  },
+  "graph": {
+    "inputs": [
+      { "name": "x", "dtype": "int8", "shape": [1, 2048] },
+      { "name": "bias", "dtype": "int8", "shape": [1, 2048] }
+    ],
+    "values": [
+      { "name": "a", "dtype": "int8", "shape": [1, 2048] },
+      { "name": "d", "dtype": "int8", "shape": [1, 2048] },
+      { "name": "b", "dtype": "int8", "shape": [1, 2048] },
+      { "name": "c", "dtype": "int8", "shape": [1, 2048] },
+      { "name": "e", "dtype": "int8", "shape": [1, 2048] }
+    ],
+    "outputs": [
+      { "name": "y", "dtype": "int8", "shape": [1, 2048] }
+    ],
+    "initializers": [],
+    "nodes": [
+      {
+        "name": "relu_0",
+        "domain": "ai.onnx",
+        "op_type": "Relu",
+        "inputs": ["x"],
+        "outputs": ["a"]
+      },
+      {
+        "name": "relu_1",
+        "domain": "ai.onnx",
+        "op_type": "Relu",
+        "inputs": ["bias"],
+        "outputs": ["d"]
+      },
+      {
+        "name": "add_0",
+        "domain": "ai.onnx",
+        "op_type": "Add",
+        "inputs": ["a", "d"],
+        "outputs": ["b"]
+      },
+      {
+        "name": "add_1",
+        "domain": "ai.onnx",
+        "op_type": "Add",
+        "inputs": ["b", "d"],
+        "outputs": ["c"]
+      },
+      {
+        "name": "add_2",
+        "domain": "ai.onnx",
+        "op_type": "Add",
+        "inputs": ["c", "a"],
+        "outputs": ["e"]
+      },
+      {
+        "name": "add_3",
+        "domain": "ai.onnx",
+        "op_type": "Add",
+        "inputs": ["e", "d"],
+        "outputs": ["y"]
+      }
+    ]
+  }
+}

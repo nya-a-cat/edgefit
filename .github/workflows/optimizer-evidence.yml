@@ -1,0 +1,45 @@
+name: Optimizer evidence
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  simulated-optimizer-evidence:
+    name: Simulated optimizer scale and topology evidence
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.12"
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master snapshot
+        with:
+          toolchain: 1.97.0
+      - name: Build release CLI
+        run: cargo build --workspace --release --locked
+      - name: Run simulated optimizer evidence
+        run: |
+          python tools/competitive-benchmark/benchmark.py \
+            --manifest tools/competitive-benchmark/optimizer_evidence_manifest.json \
+            --edgefit target/release/edgefit \
+            --tools edgefit \
+            --edgefit-repetitions 5 \
+            --measure-peak-rss \
+            --out-dir tmp/optimizer-evidence
+      - name: Publish optimizer summary
+        run: cat tmp/optimizer-evidence/competitive-benchmark.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload optimizer evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: simulated-optimizer-evidence
+          path: tmp/optimizer-evidence/
+          if-no-files-found: error

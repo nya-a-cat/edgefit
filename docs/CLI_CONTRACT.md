@@ -34,7 +34,9 @@ and must not be interpreted as either pass or policy fail.
 
 - JSON report: `edgefit.report.v1`
 - Snapshot: `edgefit.snapshot.v1`
-- Optimization plan: `edgefit.optimization_plan.v1`
+- Optimization plan: `edgefit.optimization_plan.v1`; `plan_hash` is deterministic
+  and binds the model hash, target profile fingerprint, assignments, segments,
+  and transfer events
 - Snapshot diff: `edgefit.diff.v1`
 - Execution error: `edgefit.execution_error.v1`
 - SARIF: SARIF `2.1.0` with stable EdgeFit diagnostic IDs and logical locations

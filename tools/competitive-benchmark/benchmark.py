@@ -125,8 +125,8 @@ def benchmark(args: argparse.Namespace) -> dict[str, Any]:
         if args.corpus_cache
         else declared_path(manifest_path, text_field(manifest, "corpus_cache"))
     )
-    target = declared_path(manifest_path, text_field(manifest, "default_target"))
-    require(target.is_file(), f"missing target profile {target}")
+    default_target = declared_path(manifest_path, text_field(manifest, "default_target"))
+    require(default_target.is_file(), f"missing target profile {default_target}")
     cases = select_case_specs(manifest.get("cases"), args.case_id)
     require(isinstance(cases, list) and cases, "benchmark manifest requires cases")
 
@@ -144,11 +144,16 @@ def benchmark(args: argparse.Namespace) -> dict[str, Any]:
         require(case_id not in seen, f"duplicate benchmark case {case_id}")
         seen.add(case_id)
         model_id = case_spec.get("model_id")
+        model_path_value = case_spec.get("model_path")
         generated_model = case_spec.get("generated_model")
+        sources = [
+            isinstance(model_id, str) and bool(model_id.strip()),
+            isinstance(model_path_value, str) and bool(model_path_value.strip()),
+            isinstance(generated_model, dict),
+        ]
         require(
-            (isinstance(model_id, str) and bool(model_id.strip()))
-            != isinstance(generated_model, dict),
-            f"case {case_id} requires exactly one of model_id or generated_model",
+            sum(sources) == 1,
+            f"case {case_id} requires exactly one of model_id, model_path or generated_model",
         )
         if isinstance(generated_model, dict):
             model, model_path = prepare_generated_model(
@@ -156,13 +161,27 @@ def benchmark(args: argparse.Namespace) -> dict[str, Any]:
                 generated_model,
                 out_dir / "generated-models",
             )
+        elif isinstance(model_path_value, str) and model_path_value.strip():
+            model_path = declared_path(manifest_path, model_path_value.strip())
+            require(model_path.is_file(), f"missing model fixture {model_path}")
+            model = {
+                "id": f"fixture:{case_id}",
+                "model_bytes": model_path.stat().st_size,
+                "model_sha256": sha256(model_path),
+            }
         else:
             model_id = str(model_id).strip()
             require(model_id in models, f"unknown corpus model {model_id}")
             model = models[model_id]
             model_path = resolve_model_path(model, cache)
         verify_model(model, model_path)
-        prepared_cases.append((case_spec, model, model_path))
+        target = (
+            declared_path(manifest_path, text_field(case_spec, "target"))
+            if "target" in case_spec
+            else default_target
+        )
+        require(target.is_file(), f"missing target profile {target}")
+        prepared_cases.append((case_spec, model, model_path, target))
 
     # 所有模型和清单先通过哈希预检，再启动任何被比较工具，避免留下半套证据。
     edgefit = Path(args.edgefit)
@@ -182,7 +201,7 @@ def benchmark(args: argparse.Namespace) -> dict[str, Any]:
             args.edgefit_repetitions,
             args.measure_peak_rss,
         )
-        for case_spec, model, model_path in prepared_cases
+        for case_spec, model, model_path, target in prepared_cases
     ]
 
     status_counts = Counter(
@@ -196,6 +215,12 @@ def benchmark(args: argparse.Namespace) -> dict[str, Any]:
         for case in results
         for run in case["tools"].values()
     )
+    expected_edgefit_statuses = all(
+        case["tools"].get("edgefit", {}).get("status")
+        == case["expected_edgefit_status"]
+        for case in results
+        if "edgefit" in case["tools"]
+    )
     comparisons = build_comparisons(manifest.get("comparisons", []), results)
     comparisons_complete = all(
         comparison["status"] == "complete" for comparison in comparisons
@@ -203,13 +228,21 @@ def benchmark(args: argparse.Namespace) -> dict[str, Any]:
     expectations_complete = all(
         case["expectations"]["status"] == "pass" for case in results
     )
+    target_profiles = []
+    seen_targets = set()
+    for _, _, _, target in prepared_cases:
+        resolved = str(target.resolve())
+        if resolved not in seen_targets:
+            seen_targets.add(resolved)
+            target_profiles.append(evidence_file(target))
     return {
         "schema": RESULT_SCHEMA,
-        "runner_version": "3",
+        "runner_version": "4",
         "status": (
             "complete"
             if versions_complete
             and runs_complete
+            and expected_edgefit_statuses
             and comparisons_complete
             and expectations_complete
             else "incomplete"
@@ -218,7 +251,8 @@ def benchmark(args: argparse.Namespace) -> dict[str, Any]:
         "finished_at": utc_now(),
         "manifest": evidence_file(manifest_path),
         "corpus_manifest": evidence_file(corpus_path),
-        "target_profile": evidence_file(target),
+        "target_profile": evidence_file(default_target),
+        "target_profiles": target_profiles,
         "environment": {
             "platform": platform.platform(),
             "python": platform.python_version(),
@@ -234,6 +268,10 @@ def benchmark(args: argparse.Namespace) -> dict[str, Any]:
         "cases": results,
         "comparisons": comparisons,
         "metric_boundaries": {
+            "edgefit_optimizer_latency": (
+                "profile-driven simulated CPU/NPU, launch, compute, DMA and spill estimate; "
+                "not measured device latency"
+            ),
             "edgefit_planned_activation_arena_bytes": (
                 "target-relative deterministic arena high-water mark including alignment, "
                 "declared operator workspace, fragmentation, and explicitly safe in-place reuse"
@@ -270,13 +308,20 @@ def prepare_generated_model(
     spec: dict[str, Any],
     output_dir: Path,
 ) -> tuple[dict[str, Any], Path]:
-    """生成确定性 Relu 链，用真实大图压测解析、分析、规划与报告全链。"""
-    require(spec.get("kind") == "linear_relu_chain", f"unsupported generator for {case_id}")
+    """生成确定性线性图，分别覆盖 verifier 与模拟 optimizer 的托管规模证据。"""
+    kind = spec.get("kind")
+    require(
+        kind in {"linear_relu_chain", "linear_op_chain"},
+        f"unsupported generator for {case_id}",
+    )
     node_count = spec.get("node_count")
     tensor_elements = spec.get("tensor_elements")
     dtype = spec.get("dtype", "float32")
+    op_type = spec.get("op_type", "Relu")
     require(
-        isinstance(node_count, int) and not isinstance(node_count, bool) and 1 <= node_count <= 100_000,
+        isinstance(node_count, int)
+        and not isinstance(node_count, bool)
+        and 1 <= node_count <= 100_000,
         f"generated node_count for {case_id} must be between 1 and 100000",
     )
     require(
@@ -285,7 +330,15 @@ def prepare_generated_model(
         and 1 <= tensor_elements <= 65_536,
         f"generated tensor_elements for {case_id} must be between 1 and 65536",
     )
-    require(dtype == "float32", f"generated dtype for {case_id} must be float32")
+    require(dtype in {"float32", "int8"}, f"generated dtype for {case_id} is unsupported")
+    if kind == "linear_relu_chain":
+        require(dtype == "float32", f"generated dtype for {case_id} must be float32")
+        require(op_type == "Relu", f"generated op_type for {case_id} must be Relu")
+    else:
+        require(
+            op_type in {"Relu", "HardSwish"},
+            f"generated op_type for {case_id} must be Relu or HardSwish",
+        )
 
     generator_fingerprint = hashlib.sha256(
         json.dumps(spec, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode(
@@ -301,9 +354,9 @@ def prepare_generated_model(
     for index in range(node_count):
         nodes.append(
             {
-                "name": f"relu_{index}",
+                "name": f"{op_type.lower()}_{index}",
                 "domain": "ai.onnx",
-                "op_type": "Relu",
+                "op_type": op_type,
                 "inputs": ["input" if index == 0 else f"v{index - 1}"],
                 "outputs": [f"v{index}"],
             }
@@ -365,28 +418,46 @@ def run_case(
         isinstance(tags, list) and all(isinstance(tag, str) for tag in tags),
         f"invalid tags for {case_id}",
     )
+    edgefit_command = case_spec.get("edgefit_command", "check")
+    require(
+        edgefit_command in {"check", "optimize"},
+        f"invalid edgefit_command for {case_id}: {edgefit_command}",
+    )
+    expected_edgefit_status = case_spec.get("expected_edgefit_status", "completed")
+    require(
+        expected_edgefit_status in EVIDENCE_STATUSES,
+        f"invalid expected_edgefit_status for {case_id}: {expected_edgefit_status}",
+    )
+    require(
+        edgefit_command == "check" or selected_tools == ("edgefit",),
+        f"case {case_id} optimize evidence only supports the edgefit tool",
+    )
     case_dir = out_dir / "artifacts" / case_id
     case_dir.mkdir(parents=True, exist_ok=True)
     tools = {}
     if "edgefit" in selected_tools:
+        artifact_name = (
+            "edgefit-plan.json" if edgefit_command == "optimize" else "edgefit-report.json"
+        )
+        artifact = case_dir / artifact_name
         tools["edgefit"] = run_tool(
             "edgefit",
             [
                 str(edgefit),
-                "check",
+                edgefit_command,
                 str(model_path),
                 "--target",
                 str(target),
                 "--format",
                 "json",
                 "--out",
-                str(case_dir / "edgefit-report.json"),
+                str(artifact),
             ],
             case_dir,
             timeout,
             {0, 1},
-            parse_edgefit,
-            case_dir / "edgefit-report.json",
+            parse_edgefit_plan if edgefit_command == "optimize" else parse_edgefit,
+            artifact,
             {**os.environ, "EDGEFIT_PYTHON": python},
             repetitions=edgefit_repetitions,
             measure_peak_rss=measure_peak_rss,
@@ -434,9 +505,25 @@ def run_case(
         "purpose": str(case_spec.get("purpose", "")).strip(),
         "tags": tags,
         "generated_model": case_spec.get("generated_model"),
+        "edgefit_command": edgefit_command,
+        "model_node_count": generated_node_count(case_spec, model_path),
+        "expected_edgefit_status": expected_edgefit_status,
         "tools": tools,
         "expectations": expectations,
     }
+
+
+def generated_node_count(case_spec: dict[str, Any], model_path: Path) -> int | None:
+    generated = case_spec.get("generated_model")
+    if isinstance(generated, dict):
+        value = generated.get("node_count")
+        return value if isinstance(value, int) and not isinstance(value, bool) else None
+    if "model_path" not in case_spec:
+        return None
+    data = read_json(model_path)
+    graph = data.get("graph")
+    nodes = graph.get("nodes") if isinstance(graph, dict) else None
+    return len(nodes) if isinstance(nodes, list) else None
 
 
 def evaluate_case_expectations(
@@ -452,7 +539,23 @@ def evaluate_case_expectations(
             "max_edgefit_duration_ms",
             "max_edgefit_peak_rss_bytes",
             "expected_edgefit_node_count",
+            "expected_plan_assignment_count",
             "require_deterministic_artifact",
+            "expected_plan_status",
+            "expected_plan_assignment_counts",
+            "min_plan_assignment_counts",
+            "expected_plan_segment_count",
+            "expected_plan_event_kind_counts",
+            "required_plan_event_kinds",
+            "min_plan_event_kind_counts",
+            "min_plan_spill_bytes",
+            "max_plan_spill_bytes",
+            "min_plan_transfer_bytes",
+            "max_plan_peak_scratchpad_bytes",
+            "expected_plan_blockers",
+            "required_plan_blockers",
+            "expected_plan_recipe_ids",
+            "require_plan_latency_improvement",
         }
     )
     require(not unknown, f"unknown expectations for {case_spec.get('id')}: {', '.join(unknown)}")
@@ -489,11 +592,170 @@ def evaluate_case_expectations(
         )
         actual = edgefit.get("observations", {}).get("node_count")
         add("expected_edgefit_node_count", actual, expected, actual == expected)
+    if "expected_plan_assignment_count" in spec:
+        expected = spec["expected_plan_assignment_count"]
+        require(
+            isinstance(expected, int) and not isinstance(expected, bool) and expected >= 0,
+            "expected_plan_assignment_count must be a non-negative integer",
+        )
+        actual = edgefit.get("observations", {}).get("assignment_count")
+        add("expected_plan_assignment_count", actual, expected, actual == expected)
     if "require_deterministic_artifact" in spec:
         expected = spec["require_deterministic_artifact"]
         require(isinstance(expected, bool), "require_deterministic_artifact must be boolean")
         actual = edgefit.get("artifact_deterministic")
         add("require_deterministic_artifact", actual, expected, actual is expected)
+
+    observations = edgefit.get("observations", {})
+    if "expected_plan_status" in spec:
+        expected = spec["expected_plan_status"]
+        require(expected in {"pass", "fail"}, "expected_plan_status must be pass or fail")
+        actual = observations.get("plan_status")
+        add("expected_plan_status", actual, expected, actual == expected)
+    for field in (
+        "expected_plan_assignment_counts",
+        "expected_plan_event_kind_counts",
+    ):
+        if field in spec:
+            expected = spec[field]
+            require(
+                isinstance(expected, dict)
+                and all(isinstance(key, str) and bool(key) for key in expected)
+                and all(
+                    isinstance(value, int) and not isinstance(value, bool) and value >= 0
+                    for value in expected.values()
+                ),
+                f"{field} must map names to non-negative integers",
+            )
+            observation_field = (
+                "assignment_device_counts"
+                if field == "expected_plan_assignment_counts"
+                else "event_kind_counts"
+            )
+            actual = observations.get(observation_field)
+            add(field, actual, expected, actual == expected)
+    if "min_plan_assignment_counts" in spec:
+        expected = spec["min_plan_assignment_counts"]
+        require(
+            isinstance(expected, dict)
+            and all(isinstance(key, str) and bool(key) for key in expected)
+            and all(
+                isinstance(value, int) and not isinstance(value, bool) and value >= 0
+                for value in expected.values()
+            ),
+            "min_plan_assignment_counts must map names to non-negative integers",
+        )
+        actual = observations.get("assignment_device_counts")
+        add(
+            "min_plan_assignment_counts",
+            actual,
+            expected,
+            isinstance(actual, dict)
+            and all(
+                isinstance(actual.get(key), int) and actual[key] >= value
+                for key, value in expected.items()
+            ),
+        )
+    if "required_plan_event_kinds" in spec:
+        expected = spec["required_plan_event_kinds"]
+        require(
+            isinstance(expected, list)
+            and all(isinstance(item, str) and bool(item) for item in expected),
+            "required_plan_event_kinds must be an array of non-empty strings",
+        )
+        actual_counts = observations.get("event_kind_counts")
+        actual = sorted(actual_counts) if isinstance(actual_counts, dict) else None
+        add(
+            "required_plan_event_kinds",
+            actual,
+            expected,
+            isinstance(actual, list) and all(item in actual for item in expected),
+        )
+    if "min_plan_event_kind_counts" in spec:
+        expected = spec["min_plan_event_kind_counts"]
+        require(
+            isinstance(expected, dict)
+            and all(isinstance(key, str) and bool(key) for key in expected)
+            and all(
+                isinstance(value, int) and not isinstance(value, bool) and value >= 0
+                for value in expected.values()
+            ),
+            "min_plan_event_kind_counts must map names to non-negative integers",
+        )
+        actual = observations.get("event_kind_counts")
+        add(
+            "min_plan_event_kind_counts",
+            actual,
+            expected,
+            isinstance(actual, dict)
+            and all(
+                isinstance(actual.get(key), int) and actual[key] >= value
+                for key, value in expected.items()
+            ),
+        )
+    if "expected_plan_segment_count" in spec:
+        expected = spec["expected_plan_segment_count"]
+        require(
+            isinstance(expected, int) and not isinstance(expected, bool) and expected >= 0,
+            "expected_plan_segment_count must be a non-negative integer",
+        )
+        actual = observations.get("segment_count")
+        add("expected_plan_segment_count", actual, expected, actual == expected)
+    for field, observation_field in (
+        ("min_plan_spill_bytes", "spill_bytes"),
+        ("min_plan_transfer_bytes", "transfer_bytes"),
+    ):
+        if field in spec:
+            expected = spec[field]
+            require(
+                isinstance(expected, int) and not isinstance(expected, bool) and expected >= 0,
+                f"{field} must be a non-negative integer",
+            )
+            actual = observations.get(observation_field)
+            add(field, actual, expected, isinstance(actual, int) and actual >= expected)
+    for field, observation_field in (
+        ("max_plan_spill_bytes", "spill_bytes"),
+        ("max_plan_peak_scratchpad_bytes", "peak_scratchpad_bytes"),
+    ):
+        if field in spec:
+            expected = spec[field]
+            require(
+                isinstance(expected, int) and not isinstance(expected, bool) and expected >= 0,
+                f"{field} must be a non-negative integer",
+            )
+            actual = observations.get(observation_field)
+            add(field, actual, expected, isinstance(actual, int) and actual <= expected)
+    if "required_plan_blockers" in spec:
+        expected = spec["required_plan_blockers"]
+        require(
+            isinstance(expected, list)
+            and all(isinstance(item, str) and bool(item) for item in expected),
+            "required_plan_blockers must be an array of non-empty strings",
+        )
+        actual = observations.get("blockers")
+        add(
+            "required_plan_blockers",
+            actual,
+            expected,
+            isinstance(actual, list) and all(item in actual for item in expected),
+        )
+    for field, observation_field in (
+        ("expected_plan_blockers", "blockers"),
+        ("expected_plan_recipe_ids", "recipe_ids"),
+    ):
+        if field in spec:
+            expected = spec[field]
+            require(
+                isinstance(expected, list) and all(isinstance(item, str) for item in expected),
+                f"{field} must be an array of strings",
+            )
+            actual = observations.get(observation_field)
+            add(field, actual, expected, actual == expected)
+    if "require_plan_latency_improvement" in spec:
+        expected = spec["require_plan_latency_improvement"]
+        require(isinstance(expected, bool), "require_plan_latency_improvement must be boolean")
+        actual = observations.get("latency_improved")
+        add("require_plan_latency_improvement", actual, expected, actual is expected)
     return {
         "status": "pass" if all(item["passed"] for item in checks) else "fail",
         "checks": checks,
@@ -665,6 +927,120 @@ def parse_edgefit(_: str, artifact: Path | None) -> dict[str, Any]:
         "quantization_operator_coverage": metrics.get("quantization_operator_coverage"),
         "node_count": metrics.get("node_count"),
         "tensor_count": metrics.get("tensor_count"),
+    }
+
+
+def parse_edgefit_plan(_: str, artifact: Path | None) -> dict[str, Any]:
+    require(artifact is not None, "EdgeFit plan path is missing")
+    plan = read_json(artifact)
+    require(
+        plan.get("schema") == "edgefit.optimization_plan.v1",
+        "unsupported EdgeFit optimization plan schema",
+    )
+    require(plan.get("status") in {"pass", "fail"}, "invalid EdgeFit plan status")
+    require(isinstance(plan.get("assignments"), list), "EdgeFit plan has no assignments array")
+    require(isinstance(plan.get("segments"), list), "EdgeFit plan has no segments array")
+    require(isinstance(plan.get("events"), list), "EdgeFit plan has no events array")
+    require(isinstance(plan.get("blockers"), list), "EdgeFit plan has no blockers array")
+    for field in ("model_sha256", "target_fingerprint", "accelerator_id", "confidence"):
+        require(
+            isinstance(plan.get(field), str) and bool(plan[field].strip()),
+            f"EdgeFit plan field {field} must be a non-empty string",
+        )
+    require(
+        isinstance(plan.get("plan_hash"), str) and bool(plan["plan_hash"].strip()),
+        "EdgeFit plan has no plan hash",
+    )
+    proposed = plan.get("proposed")
+    baseline = plan.get("baseline")
+    require(isinstance(proposed, dict), "EdgeFit plan has no proposed metrics object")
+    require(isinstance(baseline, dict), "EdgeFit plan has no baseline metrics object")
+    for field in (
+        "blockers",
+        "transfer_ns",
+        "transfer_bytes",
+        "spill_bytes",
+        "peak_scratchpad_bytes",
+    ):
+        value = proposed.get(field)
+        require(
+            isinstance(value, int) and not isinstance(value, bool) and value >= 0,
+            f"EdgeFit plan metric {field} must be a non-negative integer",
+        )
+    for scope, metrics in (("baseline", baseline), ("proposed", proposed)):
+        latency = metrics.get("latency_ns")
+        require(
+            latency is None
+            or (isinstance(latency, int) and not isinstance(latency, bool) and latency >= 0),
+            f"EdgeFit plan {scope} latency_ns must be null or a non-negative integer",
+        )
+    for field in ("launch_ns", "compute_ns"):
+        value = proposed.get(field)
+        require(
+            value is None
+            or (isinstance(value, int) and not isinstance(value, bool) and value >= 0),
+            f"EdgeFit plan metric {field} must be null or a non-negative integer",
+        )
+    require(
+        all(isinstance(item, dict) for item in plan["assignments"]),
+        "EdgeFit plan assignments must contain objects",
+    )
+    require(
+        all(isinstance(item, dict) for item in plan["segments"]),
+        "EdgeFit plan segments must contain objects",
+    )
+    require(
+        all(isinstance(item, dict) for item in plan["events"]),
+        "EdgeFit plan events must contain objects",
+    )
+    require(
+        all(isinstance(item, str) for item in plan["blockers"]),
+        "EdgeFit plan blockers must contain strings",
+    )
+    assignments = plan["assignments"]
+    events = plan["events"]
+    assignment_device_counts = Counter(
+        str(item.get("device", "unknown")) for item in assignments
+    )
+    event_kind_counts = Counter(str(item.get("kind", "unknown")) for item in events)
+    recipe_ids = sorted(
+        {str(item["recipe_id"]) for item in assignments if item.get("recipe_id") is not None}
+    )
+    baseline_latency = baseline.get("latency_ns")
+    proposed_latency = proposed.get("latency_ns")
+    latency_improved = (
+        proposed_latency < baseline_latency
+        if isinstance(baseline_latency, int)
+        and not isinstance(baseline_latency, bool)
+        and isinstance(proposed_latency, int)
+        and not isinstance(proposed_latency, bool)
+        else None
+    )
+    return {
+        "plan_status": plan["status"],
+        "model_sha256": plan["model_sha256"],
+        "target_fingerprint": plan["target_fingerprint"],
+        "accelerator_id": plan["accelerator_id"],
+        "confidence": plan["confidence"],
+        "plan_hash": plan["plan_hash"],
+        "assignment_count": len(assignments),
+        "assignment_device_counts": dict(sorted(assignment_device_counts.items())),
+        "segment_count": len(plan["segments"]),
+        "event_count": len(events),
+        "event_kind_counts": dict(sorted(event_kind_counts.items())),
+        "recipe_ids": recipe_ids,
+        "blockers": plan["blockers"],
+        "baseline_blockers": baseline.get("blockers"),
+        "proposed_blockers": proposed.get("blockers"),
+        "baseline_latency_ns": baseline_latency,
+        "proposed_latency_ns": proposed_latency,
+        "launch_ns": proposed.get("launch_ns"),
+        "compute_ns": proposed.get("compute_ns"),
+        "transfer_ns": proposed["transfer_ns"],
+        "transfer_bytes": proposed["transfer_bytes"],
+        "spill_bytes": proposed["spill_bytes"],
+        "peak_scratchpad_bytes": proposed["peak_scratchpad_bytes"],
+        "latency_improved": latency_improved,
     }
 
 
@@ -1089,6 +1465,8 @@ def render_markdown(summary: dict[str, Any]) -> str:
             "",
             "## Metric boundaries",
             "",
+            "- Optimizer latency comes from the declared simulated profile; it is not measured device latency.",
+            "- Hosted duration and RSS are complete CLI process observations, not model inference measurements.",
             "- EdgeFit reports both logical live tensor bytes and a target-relative planned arena high-water mark.",
             "- The planned arena includes declared alignment, workspace, fragmentation and explicitly safe in-place reuse.",
             "- onnx-tool `Total/Memory` is summed per-node memory, not peak activation memory.",
@@ -1104,6 +1482,13 @@ def render_markdown(summary: dict[str, Any]) -> str:
 def observation(tool: str, result: dict[str, Any]) -> str:
     data = result.get("observations", {})
     if tool == "edgefit" and data:
+        if "plan_status" in data:
+            return (
+                f"plan={data.get('plan_status')}; devices={data.get('assignment_device_counts')}; "
+                f"segments={data.get('segment_count')}; events={data.get('event_kind_counts')}; "
+                f"spill={data.get('spill_bytes')}; transfer={data.get('transfer_bytes')}; "
+                f"plan_hash={data.get('plan_hash')}"
+            )
         return (
             f"verdict={data.get('verdict')}; planned_arena={data.get('planned_activation_arena_bytes')}; "
             f"peak_node={data.get('peak_activation_node_name') or data.get('peak_activation_node_index')}; "
