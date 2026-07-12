@@ -238,6 +238,181 @@
         "required_plan_blockers": ["node:2 tensor:d scratchpad_unavailable spill_disabled"],
         "expected_plan_recipe_ids": []
       }
+    },
+    {
+      "id": "optimizer-oracle-tiny",
+      "purpose": "Bounded placement oracle evidence for direct NPU candidates",
+      "tags": ["optimizer", "oracle", "tiny", "simulated"],
+      "edgefit_command": "optimize_validate",
+      "model_path": "../../examples/models/virtual_npu_tiny.edgefit.json",
+      "expectations": {
+        "require_deterministic_artifact": true,
+        "expected_validation_status": "pass",
+        "require_no_missed_feasibility": true
+      }
+    },
+    {
+      "id": "optimizer-oracle-recipe",
+      "purpose": "Bounded placement oracle evidence across CPU, direct NPU and recipe choices",
+      "tags": ["optimizer", "oracle", "recipe", "simulated"],
+      "edgefit_command": "optimize_validate",
+      "generated_model": {
+        "kind": "linear_op_chain",
+        "node_count": 8,
+        "tensor_elements": 1024,
+        "dtype": "int8",
+        "op_type": "HardSwish"
+      },
+      "expectations": {
+        "require_deterministic_artifact": true,
+        "expected_validation_status": "pass",
+        "require_no_missed_feasibility": true
+      }
+    },
+    {
+      "id": "optimizer-diamond-10000",
+      "purpose": "Deterministic 10K-node diamond topology scale evidence",
+      "tags": ["optimizer", "performance", "diamond", "10k", "simulated"],
+      "edgefit_command": "optimize",
+      "generated_model": {
+        "kind": "diamond_chain",
+        "node_count": 10000,
+        "tensor_elements": 1024,
+        "dtype": "int8",
+        "op_type": "Relu"
+      },
+      "expectations": {
+        "max_edgefit_duration_ms": 60000,
+        "max_edgefit_peak_rss_bytes": 2147483648,
+        "require_deterministic_artifact": true,
+        "expected_plan_status": "pass",
+        "expected_plan_assignment_count": 10000
+      }
+    },
+    {
+      "id": "optimizer-fanout-10000",
+      "purpose": "Deterministic 10K-node fan-out and merge scale evidence",
+      "tags": ["optimizer", "performance", "fanout", "10k", "simulated"],
+      "edgefit_command": "optimize",
+      "generated_model": {
+        "kind": "fanout_merge",
+        "node_count": 10000,
+        "tensor_elements": 1024,
+        "dtype": "int8",
+        "op_type": "Relu"
+      },
+      "expectations": {
+        "max_edgefit_duration_ms": 60000,
+        "max_edgefit_peak_rss_bytes": 2147483648,
+        "require_deterministic_artifact": true,
+        "expected_plan_status": "pass",
+        "expected_plan_assignment_count": 10000
+      }
+    },
+    {
+      "id": "optimizer-residual-10000",
+      "purpose": "Deterministic 10K-node residual topology scale evidence",
+      "tags": ["optimizer", "performance", "residual", "10k", "simulated"],
+      "edgefit_command": "optimize",
+      "generated_model": {
+        "kind": "residual_chain",
+        "node_count": 10000,
+        "tensor_elements": 1024,
+        "dtype": "int8",
+        "op_type": "Relu"
+      },
+      "expectations": {
+        "max_edgefit_duration_ms": 60000,
+        "max_edgefit_peak_rss_bytes": 2147483648,
+        "require_deterministic_artifact": true,
+        "expected_plan_status": "pass",
+        "expected_plan_assignment_count": 10000
+      }
+    },
+    {
+      "id": "optimizer-diamond-100000",
+      "purpose": "Manual deterministic 100K-node diamond topology evidence",
+      "tags": ["optimizer", "performance", "diamond", "100k", "manual", "simulated"],
+      "edgefit_command": "optimize",
+      "retain_edgefit_artifact": false,
+      "generated_model": {
+        "kind": "diamond_chain",
+        "node_count": 100000,
+        "tensor_elements": 1024,
+        "dtype": "int8",
+        "op_type": "Relu"
+      },
+      "expectations": {
+        "max_edgefit_duration_ms": 300000,
+        "max_edgefit_peak_rss_bytes": 4294967296,
+        "require_deterministic_artifact": true,
+        "expected_plan_status": "pass",
+        "expected_plan_assignment_count": 100000
+      }
+    },
+    {
+      "id": "optimizer-fanout-100000",
+      "purpose": "Manual deterministic 100K-node fan-out topology evidence",
+      "tags": ["optimizer", "performance", "fanout", "100k", "manual", "simulated"],
+      "edgefit_command": "optimize",
+      "retain_edgefit_artifact": false,
+      "generated_model": {
+        "kind": "fanout_merge",
+        "node_count": 100000,
+        "tensor_elements": 1024,
+        "dtype": "int8",
+        "op_type": "Relu"
+      },
+      "expectations": {
+        "max_edgefit_duration_ms": 300000,
+        "max_edgefit_peak_rss_bytes": 4294967296,
+        "require_deterministic_artifact": true,
+        "expected_plan_status": "pass",
+        "expected_plan_assignment_count": 100000
+      }
+    },
+    {
+      "id": "optimizer-residual-100000",
+      "purpose": "Manual deterministic 100K-node residual topology evidence",
+      "tags": ["optimizer", "performance", "residual", "100k", "manual", "simulated"],
+      "edgefit_command": "optimize",
+      "retain_edgefit_artifact": false,
+      "generated_model": {
+        "kind": "residual_chain",
+        "node_count": 100000,
+        "tensor_elements": 1024,
+        "dtype": "int8",
+        "op_type": "Relu"
+      },
+      "expectations": {
+        "max_edgefit_duration_ms": 300000,
+        "max_edgefit_peak_rss_bytes": 4294967296,
+        "require_deterministic_artifact": true,
+        "expected_plan_status": "pass",
+        "expected_plan_assignment_count": 100000
+      }
+    },
+    {
+      "id": "optimizer-linear-1000000",
+      "purpose": "Manual one-million-node linear stress evidence without retaining the giant plan",
+      "tags": ["optimizer", "performance", "linear-chain", "1m", "manual", "simulated"],
+      "edgefit_command": "optimize",
+      "edgefit_repetitions": 3,
+      "retain_edgefit_artifact": false,
+      "generated_model": {
+        "kind": "linear_op_chain",
+        "node_count": 1000000,
+        "tensor_elements": 1024,
+        "dtype": "int8",
+        "op_type": "Relu"
+      },
+      "expectations": {
+        "max_edgefit_duration_ms": 120000,
+        "max_edgefit_peak_rss_bytes": 6442450944,
+        "require_deterministic_artifact": true,
+        "expected_plan_status": "pass",
+        "expected_plan_assignment_count": 1000000
+      }
     }
   ]
 }

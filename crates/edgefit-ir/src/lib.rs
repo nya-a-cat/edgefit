@@ -703,7 +703,9 @@ impl Parser {
             self.skip_ws();
             self.expect(':')?;
             let value = self.parse_value()?;
-            map.insert(key, value);
+            if map.insert(key.clone(), value).is_some() {
+                return Err(format!("duplicate JSON key {key}"));
+            }
             self.skip_ws();
             if self.consume('}') {
                 break;
@@ -850,6 +852,13 @@ mod tests {
             Some("edgefit.normalized_model.v1")
         );
         assert_eq!(obj.get("n").and_then(JsonValue::as_i64), Some(2));
+    }
+
+    #[test]
+    fn rejects_duplicate_json_keys() {
+        assert!(parse_json(r#"{"schema":"one","schema":"two"}"#)
+            .unwrap_err()
+            .contains("duplicate JSON key schema"));
     }
 
     #[test]

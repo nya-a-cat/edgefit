@@ -173,13 +173,18 @@ jobs:
           toolchain: 1.97.0
       - name: Build release CLI
         run: cargo build --workspace --release --locked
-      - name: Verify optimizer 10K pass and fail-closed contracts
+      - name: Verify optimizer oracle, topology scale and fail-closed contracts
         run: |
           python tools/competitive-benchmark/benchmark.py \
             --manifest tools/competitive-benchmark/optimizer_evidence_manifest.json \
             --edgefit target/release/edgefit \
             --tools edgefit \
             --case-id optimizer-linear-10000 \
+            --case-id optimizer-diamond-10000 \
+            --case-id optimizer-fanout-10000 \
+            --case-id optimizer-residual-10000 \
+            --case-id optimizer-oracle-tiny \
+            --case-id optimizer-oracle-recipe \
             --case-id optimizer-no-spill-blocker \
             --edgefit-repetitions 3 \
             --measure-peak-rss \

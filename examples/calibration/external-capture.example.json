@@ -1,0 +1,38 @@
+{
+  "schema": "edgefit.calibration_capture.v1",
+  "identity": {
+    "device_id": "example-device",
+    "runtime_name": "example-runtime",
+    "runtime_version": "1.0"
+  },
+  "environment": {
+    "operating_system": "example-os",
+    "architecture": "example-arch",
+    "hardware": "example-hardware",
+    "toolchain": "example-toolchain"
+  },
+  "capture": {
+    "captured_at": "2026-07-13T00:00:00Z",
+    "command": "example-runtime --model virtual_npu_tiny.edgefit.json",
+    "warmup_runs": "2"
+  },
+  "runtime": {
+    "accepted": true,
+    "rejected_reason": null
+  },
+  "measurements": {
+    "arena_high_water_bytes": "4096",
+    "latency_ns": ["7000", "7200", "7100", "7300", "7150"]
+  },
+  "thresholds": {
+    "p95_latency_budget_ns": "10000"
+  },
+  "runtime_binary": "external-runtime.example.bin",
+  "attachments": [
+    {
+      "name": "raw-log",
+      "path": "external-runtime.example.log",
+      "media_type": "text/plain"
+    }
+  ]
+}

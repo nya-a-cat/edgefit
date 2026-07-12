@@ -53,8 +53,11 @@ fn alpha_command_and_exit_code_contract_is_stable() {
         "target validate <profile>",
         "calibration verify <evidence.json>",
         "calibration simulate <model.onnx|model.edgefit.json>",
+        "calibration pack <capture.json>",
         "check <model.onnx|model.edgefit.json>",
         "optimize <model.onnx|model.edgefit.json>",
+        "optimize validate <model.onnx|model.edgefit.json>",
+        "optimize sweep <model.onnx|model.edgefit.json>",
         "snapshot <model.onnx|model.edgefit.json>",
         "diff --old path --new path",
     ] {
@@ -92,6 +95,92 @@ fn optimize_emits_a_machine_readable_plan() {
     assert!(json.contains("\"status\": \"pass\""));
     assert!(json.contains("\"accelerator_id\": \"generic-npu-v1\""));
     parse_json(&json).expect("parse optimization plan");
+}
+
+#[test]
+fn optimize_validate_emits_bounded_oracle_evidence() {
+    let output = run(&[
+        "optimize",
+        "validate",
+        &fixture("examples/models/virtual_npu_tiny.edgefit.json"),
+        "--target",
+        &fixture("targets/virtual-npu.yaml"),
+    ]);
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json = String::from_utf8_lossy(&output.stdout);
+    assert!(json.contains("\"schema\": \"edgefit.optimizer_validation.v1\""));
+    assert!(json.contains("placement_under_deterministic_spill_scheduler"));
+    assert!(json.contains("\"greedy\""));
+    assert!(json.contains("\"oracle\""));
+    parse_json(&json).expect("parse optimizer validation");
+}
+
+#[test]
+fn optimize_sweep_emits_profile_matrix_evidence() {
+    let output = run(&[
+        "optimize",
+        "sweep",
+        &fixture("examples/models/virtual_npu_tiny.edgefit.json"),
+        "--manifest",
+        &fixture("examples/optimizer/virtual-npu-profile-matrix.json"),
+    ]);
+    assert!(
+        matches!(output.status.code(), Some(0) | Some(1)),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json = String::from_utf8_lossy(&output.stdout);
+    assert!(json.contains("\"schema\": \"edgefit.optimization_matrix.v1\""));
+    assert!(json.contains("\"classification\""));
+    assert!(json.contains("\"matrix_hash\""));
+    parse_json(&json).expect("parse optimizer profile matrix");
+}
+
+#[test]
+fn calibration_pack_builds_and_verifies_external_evidence() {
+    let dir = unique_dir("calibration-pack");
+    let packed = dir.join("packed");
+    let output = run(&[
+        "calibration",
+        "pack",
+        &fixture("examples/calibration/external-capture.example.json"),
+        "--model",
+        &fixture("examples/models/virtual_npu_tiny.edgefit.json"),
+        "--target",
+        &fixture("targets/virtual-npu.yaml"),
+        "--out-dir",
+        packed.to_str().expect("pack path"),
+    ]);
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json = String::from_utf8_lossy(&output.stdout);
+    assert!(json.contains("\"schema\": \"edgefit.calibration_verification.v1\""));
+    assert!(packed.join("capture.json").is_file());
+    assert!(packed.join("external-runtime.example.bin").is_file());
+    assert!(packed.join("external-runtime.example.log").is_file());
+    assert!(packed.join("evidence.json").is_file());
+    assert!(packed.join("verification.json").is_file());
+    assert!(packed.join("verification.md").is_file());
+    parse_json(&json).expect("parse packed calibration verification");
+
+    let verification = run(&[
+        "calibration",
+        "verify",
+        packed.join("evidence.json").to_str().expect("evidence path"),
+        "--model",
+        &fixture("examples/models/virtual_npu_tiny.edgefit.json"),
+        "--target",
+        &fixture("targets/virtual-npu.yaml"),
+    ]);
+    assert!(verification.status.success());
+    fs::remove_dir_all(dir).expect("cleanup calibration pack");
 }
 
 #[test]

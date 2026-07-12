@@ -67,6 +67,25 @@ struct Candidate<'a> {
     recipe_id: Option<&'a str>,
 }
 
+/// 精确 placement oracle 的节点上限；更大的图必须使用线性贪婪路径。
+pub const MAX_ORACLE_NODES: usize = 14;
+/// 精确枚举的硬上限，避免包含 CPU、直接 NPU 与 recipe 时组合爆炸。
+pub const MAX_ORACLE_PLANS: u64 = 65_536;
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct OptimizationValidation {
+    pub schema: String,
+    pub status: String,
+    pub scope: String,
+    pub enumerated_plans: u64,
+    pub greedy: OptimizationPlan,
+    pub oracle: OptimizationPlan,
+    pub blocker_delta: i128,
+    pub latency_gap_ns: Option<u64>,
+    pub latency_gap_ppm: Option<u64>,
+    pub validation_hash: String,
+}
+
 pub fn optimize(model: &NormalizedModel, profile: &TargetProfile) -> EdgeFitResult<OptimizationPlan> {
     profile.validate()?;
     profile
@@ -183,6 +202,194 @@ pub fn optimize(model: &NormalizedModel, profile: &TargetProfile) -> EdgeFitResu
     };
     validate_plan_invariants(&plan, model, profile)?;
     Ok(plan)
+}
+
+/// 使用有界枚举验证贪婪计划的可行性与模拟代价差距。
+///
+/// oracle 会枚举 CPU、直接 NPU 与可信 recipe，但继续复用正式的确定性
+/// scratchpad/spill 调度器，因此不声称穷举了所有可能的 spill 时序。
+pub fn validate_optimization(
+    model: &NormalizedModel,
+    profile: &TargetProfile,
+) -> EdgeFitResult<OptimizationValidation> {
+    if model.nodes.len() > MAX_ORACLE_NODES {
+        return Err(format!(
+            "optimizer oracle supports at most {MAX_ORACLE_NODES} nodes"
+        ));
+    }
+    let greedy = optimize(model, profile)?;
+    let mut choices = Vec::with_capacity(model.nodes.len());
+    let mut enumerated_plans = 1_u64;
+    for (node_index, node) in model.nodes.iter().enumerate() {
+        let node_choices = oracle_node_assignments(node_index, node, model, profile)?;
+        let choice_count = u64::try_from(node_choices.len())
+            .map_err(|_| "optimizer oracle choice count overflow".to_string())?;
+        enumerated_plans = checked_mul(
+            enumerated_plans,
+            choice_count,
+            "optimizer oracle plan count",
+        )?;
+        if enumerated_plans > MAX_ORACLE_PLANS {
+            return Err(format!(
+                "optimizer oracle candidate count {enumerated_plans} exceeds limit {MAX_ORACLE_PLANS}"
+            ));
+        }
+        choices.push(node_choices);
+    }
+
+    let mut current = Vec::with_capacity(model.nodes.len());
+    let mut oracle = None;
+    enumerate_oracle_plans(
+        0,
+        &choices,
+        &mut current,
+        model,
+        profile,
+        greedy.baseline_blockers,
+        greedy.baseline_latency_ns,
+        &mut oracle,
+    )?;
+    let oracle = oracle.ok_or("optimizer oracle produced no candidate plan")?;
+    let blocker_delta = i128::from(greedy.proposed_blockers)
+        .checked_sub(i128::from(oracle.proposed_blockers))
+        .ok_or_else(|| "optimizer oracle blocker delta overflow".to_string())?;
+    let latency_gap_ns = match (
+        greedy.proposed_blockers == oracle.proposed_blockers,
+        greedy.proposed_latency_ns,
+        oracle.proposed_latency_ns,
+    ) {
+        (true, Some(greedy_latency), Some(oracle_latency)) => {
+            Some(greedy_latency.saturating_sub(oracle_latency))
+        }
+        _ => None,
+    };
+    let latency_gap_ppm = match (latency_gap_ns, oracle.proposed_latency_ns) {
+        (Some(0), Some(0)) => Some(0),
+        (Some(gap), Some(oracle_latency)) if oracle_latency != 0 => {
+            let scaled = u128::from(gap)
+                .checked_mul(1_000_000)
+                .ok_or_else(|| "optimizer oracle latency gap overflow".to_string())?
+                / u128::from(oracle_latency);
+            Some(
+                u64::try_from(scaled)
+                    .map_err(|_| "optimizer oracle latency gap conversion overflow".to_string())?,
+            )
+        }
+        _ => None,
+    };
+    let mut validation = OptimizationValidation {
+        schema: "edgefit.optimizer_validation.v1".to_string(),
+        status: if blocker_delta > 0 { "fail" } else { "pass" }.to_string(),
+        scope: "placement_under_deterministic_spill_scheduler".to_string(),
+        enumerated_plans,
+        greedy,
+        oracle,
+        blocker_delta,
+        latency_gap_ns,
+        latency_gap_ppm,
+        validation_hash: String::new(),
+    };
+    validation.validation_hash = validation_fingerprint(&validation);
+    Ok(validation)
+}
+
+fn oracle_node_assignments(
+    node_index: usize,
+    node: &NodeInfo,
+    model: &NormalizedModel,
+    profile: &TargetProfile,
+) -> EdgeFitResult<Vec<NodeAssignment>> {
+    let rule = profile
+        .op_rule(&node.domain, &node.op_type)
+        .filter(|rule| contract_compatible(node, rule, model, profile));
+    let cpu = match rule.and_then(|rule| rule.cpu_cost.as_ref()) {
+        Some(cost) => evaluate_cost(cost, node, model, profile)?.map(|(launch_ns, compute_ns)| {
+            Candidate {
+                kernel_id: Some(cost.id.as_str()),
+                launch_ns,
+                compute_ns,
+                recipe_id: None,
+            }
+        }),
+        None => None,
+    };
+    let direct = match rule.and_then(|rule| rule.npu_cost.as_ref()) {
+        Some(cost) => evaluate_cost(cost, node, model, profile)?.map(|(launch_ns, compute_ns)| {
+            Candidate {
+                kernel_id: Some(cost.id.as_str()),
+                launch_ns,
+                compute_ns,
+                recipe_id: None,
+            }
+        }),
+        None => None,
+    };
+    let recipe = match profile
+        .replacement_recipes
+        .get(&(node.domain.clone(), node.op_type.clone()))
+    {
+        Some(recipe) => recipe_candidate(recipe, node, model, profile)?,
+        None => None,
+    };
+    let mut assignments = Vec::new();
+    if cpu.is_some() {
+        assignments.push(assignment_for_candidate(node_index, node, "cpu", cpu));
+    }
+    if direct.is_some() {
+        assignments.push(assignment_for_candidate(node_index, node, "npu", direct));
+    }
+    if recipe.is_some() {
+        assignments.push(assignment_for_candidate(node_index, node, "npu", recipe));
+    }
+    if assignments.is_empty() {
+        assignments.push(assignment_for_candidate(node_index, node, "cpu", None));
+    }
+    Ok(assignments)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn enumerate_oracle_plans(
+    node_index: usize,
+    choices: &[Vec<NodeAssignment>],
+    current: &mut Vec<NodeAssignment>,
+    model: &NormalizedModel,
+    profile: &TargetProfile,
+    baseline_blockers: u64,
+    baseline_latency_ns: Option<u64>,
+    best: &mut Option<OptimizationPlan>,
+) -> EdgeFitResult<()> {
+    if node_index == choices.len() {
+        let plan = build_plan(
+            model,
+            profile,
+            baseline_blockers,
+            baseline_latency_ns,
+            current.clone(),
+        )?;
+        validate_plan_invariants(&plan, model, profile)?;
+        if best
+            .as_ref()
+            .is_none_or(|existing| plan_is_better(&plan, existing))
+        {
+            *best = Some(plan);
+        }
+        return Ok(());
+    }
+    for assignment in &choices[node_index] {
+        current.push(assignment.clone());
+        enumerate_oracle_plans(
+            node_index + 1,
+            choices,
+            current,
+            model,
+            profile,
+            baseline_blockers,
+            baseline_latency_ns,
+            best,
+        )?;
+        current.pop();
+    }
+    Ok(())
 }
 
 fn prospective_boundary_latency(
@@ -1390,11 +1597,80 @@ fn plan_fingerprint(
     format!("fnv1a64:{hash:016x}")
 }
 
+fn validation_fingerprint(validation: &OptimizationValidation) -> String {
+    fingerprint_text(&format!(
+        "schema={};status={};scope={};plans={};greedy={};oracle={};blockers={};gap_ns={:?};gap_ppm={:?}",
+        validation.schema,
+        validation.status,
+        validation.scope,
+        validation.enumerated_plans,
+        validation.greedy.plan_hash,
+        validation.oracle.plan_hash,
+        validation.blocker_delta,
+        validation.latency_gap_ns,
+        validation.latency_gap_ppm,
+    ))
+}
+
+fn fingerprint_text(text: &str) -> String {
+    let mut hash = 0xcbf2_9ce4_8422_2325_u64;
+    for byte in text.as_bytes() {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    format!("fnv1a64:{hash:016x}")
+}
+
 pub fn render_plan(plan: &OptimizationPlan, format: &str) -> String {
     if format == "markdown" {
         return render_markdown(plan);
     }
     render_json(plan)
+}
+
+pub fn render_validation(validation: &OptimizationValidation, format: &str) -> String {
+    if format == "markdown" {
+        return render_validation_markdown(validation);
+    }
+    render_validation_json(validation)
+}
+
+fn render_validation_json(validation: &OptimizationValidation) -> String {
+    let optional = |value: Option<u64>| {
+        value
+            .map(|item| item.to_string())
+            .unwrap_or_else(|| "null".to_string())
+    };
+    format!(
+        "{{\n  \"schema\": \"{}\",\n  \"status\": \"{}\",\n  \"scope\": \"{}\",\n  \"enumerated_plans\": {},\n  \"greedy\": {},  \"oracle\": {},  \"quality\": {{\"blocker_delta\":{},\"latency_gap_ns\":{},\"latency_gap_ppm\":{}}},\n  \"validation_hash\": \"{}\"\n}}\n",
+        validation.schema,
+        validation.status,
+        validation.scope,
+        validation.enumerated_plans,
+        render_json(&validation.greedy),
+        render_json(&validation.oracle),
+        validation.blocker_delta,
+        optional(validation.latency_gap_ns),
+        optional(validation.latency_gap_ppm),
+        validation.validation_hash,
+    )
+}
+
+fn render_validation_markdown(validation: &OptimizationValidation) -> String {
+    format!(
+        "# EdgeFit Optimizer Validation\n\n**Status:** `{}`  \n**Scope:** `{}`  \n**Enumerated plans:** `{}`  \n**Validation hash:** `{}`\n\n| Metric | Greedy | Oracle | Gap |\n| --- | ---: | ---: | ---: |\n| Blockers | {} | {} | {} |\n| Modeled latency (ns) | {} | {} | {} |\n| Modeled latency gap (ppm) | - | - | {} |\n\nThe oracle enumerates placement and per-node candidate choices while reusing the deterministic spill scheduler. It is simulated evidence, not a hardware measurement.\n",
+        validation.status,
+        validation.scope,
+        validation.enumerated_plans,
+        validation.validation_hash,
+        validation.greedy.proposed_blockers,
+        validation.oracle.proposed_blockers,
+        validation.blocker_delta,
+        display_optional(validation.greedy.proposed_latency_ns),
+        display_optional(validation.oracle.proposed_latency_ns),
+        display_optional(validation.latency_gap_ns),
+        display_optional(validation.latency_gap_ppm),
+    )
 }
 
 fn render_json(plan: &OptimizationPlan) -> String {
@@ -1480,6 +1756,45 @@ mod tests {
         changed_model.sha256 = "sha256:changed-model".to_string();
         let changed_input = optimize(&changed_model, &profile).unwrap();
         assert_ne!(first.plan_hash, changed_input.plan_hash);
+    }
+
+    #[test]
+    fn bounded_oracle_validates_greedy_plan_deterministically() {
+        let model = parse_normalized_model(include_str!(
+            "../../../examples/models/virtual_npu_tiny.edgefit.json"
+        ))
+        .unwrap();
+        let profile = parse_profile(
+            include_str!("../../../targets/virtual-npu.yaml"),
+            PathBuf::from("targets/virtual-npu.yaml"),
+        )
+        .unwrap();
+
+        let first = validate_optimization(&model, &profile).unwrap();
+        let second = validate_optimization(&model, &profile).unwrap();
+        assert_eq!(first, second);
+        assert_eq!(first.status, "pass");
+        assert!(first.enumerated_plans >= 1);
+        assert_eq!(first.greedy.proposed_blockers, first.oracle.proposed_blockers);
+        assert!(render_validation(&first, "json")
+            .contains("\"schema\": \"edgefit.optimizer_validation.v1\""));
+    }
+
+    #[test]
+    fn bounded_oracle_rejects_graphs_above_node_limit() {
+        let mut model = parse_normalized_model(include_str!(
+            "../../../examples/models/virtual_npu_tiny.edgefit.json"
+        ))
+        .unwrap();
+        model.nodes = vec![model.nodes[0].clone(); MAX_ORACLE_NODES + 1];
+        let profile = parse_profile(
+            include_str!("../../../targets/virtual-npu.yaml"),
+            PathBuf::from("targets/virtual-npu.yaml"),
+        )
+        .unwrap();
+
+        let error = validate_optimization(&model, &profile).unwrap_err();
+        assert!(error.contains("at most"));
     }
 
     #[test]
@@ -1843,6 +2158,31 @@ quantization:
             PathBuf::from("tests/optimizer-profile.yaml"),
         )
         .unwrap()
+    }
+
+    #[test]
+    fn oracle_matrix_has_no_missed_feasibility_across_256_fixed_cases() {
+        let model = parse_model(&[
+            ("Relu", &["x"], &["a"]),
+            ("Relu", &["a"], &["b"]),
+            ("Relu", &["b"], &["c"]),
+            ("Relu", &["c"], &["d"]),
+            ("Relu", &["d"], &["e"]),
+            ("Relu", &["e"], &["y"]),
+        ]);
+        for case in 0_u64..256 {
+            let profile = parse_test_profile(
+                262_144,
+                true,
+                1 + case * 41,
+                1 + case * 17,
+                1 + case * 13,
+            );
+            let validation = validate_optimization(&model, &profile).unwrap();
+            assert_eq!(validation.blocker_delta, 0, "case {case}");
+            assert_eq!(validation.status, "pass", "case {case}");
+            assert!(validation.enumerated_plans <= MAX_ORACLE_PLANS);
+        }
     }
 
     #[test]

@@ -5,7 +5,7 @@
 use edgefit_calibration::{
     parse_evidence, render_verification_json, render_verification_markdown, CheckStatus,
 };
-use edgefit_core::{simulate_calibration_files, verify_calibration_files};
+use edgefit_core::{pack_calibration_files, simulate_calibration_files, verify_calibration_files};
 use edgefit_ir::escape_json;
 use std::fs;
 use std::io::Write;
@@ -28,7 +28,8 @@ pub fn run(args: &[String]) -> Result<i32, String> {
     match args.first().map(String::as_str) {
         Some("verify") => run_verify(args),
         Some("simulate") => run_simulate(args),
-        _ => Err("usage: edgefit calibration <verify|simulate> ...".to_string()),
+        Some("pack") => run_pack(args),
+        _ => Err("usage: edgefit calibration <verify|simulate|pack> ...".to_string()),
     }
 }
 
@@ -165,6 +166,67 @@ fn parse_simulate(args: &[String]) -> Result<SimulationCommand, String> {
         target: target.ok_or("calibration simulation --target is required")?,
         scenario: scenario.ok_or("calibration simulation --scenario is required")?,
         out_dir: out_dir.ok_or("calibration simulation --out-dir is required")?,
+    })
+}
+
+#[derive(Debug)]
+struct PackCommand {
+    capture: PathBuf,
+    model: PathBuf,
+    target: PathBuf,
+    out_dir: PathBuf,
+}
+
+fn run_pack(args: &[String]) -> Result<i32, String> {
+    let parsed = parse_pack(args)?;
+    let result = pack_calibration_files(
+        &parsed.capture,
+        &parsed.model,
+        &parsed.target,
+        &parsed.out_dir,
+    )?;
+    print!("{}", result.verification_json);
+    Ok(if result.status == "fail" {
+        EXIT_POLICY_FAIL
+    } else {
+        EXIT_PASS
+    })
+}
+
+fn parse_pack(args: &[String]) -> Result<PackCommand, String> {
+    if args.len() < 2 || args[0] != "pack" {
+        return Err(
+            "usage: edgefit calibration pack <capture.json> --model <model> --target <profile> --out-dir <new-directory>"
+                .to_string(),
+        );
+    }
+    let capture = PathBuf::from(&args[1]);
+    let mut model = None;
+    let mut target = None;
+    let mut out_dir = None;
+    let mut index = 2;
+    while index < args.len() {
+        let flag = args[index].as_str();
+        index += 1;
+        let value = args
+            .get(index)
+            .ok_or_else(|| format!("{flag} requires a value"))?;
+        match flag {
+            "--model" if model.is_none() => model = Some(PathBuf::from(value)),
+            "--target" if target.is_none() => target = Some(PathBuf::from(value)),
+            "--out-dir" if out_dir.is_none() => out_dir = Some(PathBuf::from(value)),
+            "--model" | "--target" | "--out-dir" => {
+                return Err(format!("duplicate calibration pack option {flag}"));
+            }
+            other => return Err(format!("unexpected calibration pack argument {other}")),
+        }
+        index += 1;
+    }
+    Ok(PackCommand {
+        capture,
+        model: model.ok_or("calibration pack --model is required")?,
+        target: target.ok_or("calibration pack --target is required")?,
+        out_dir: out_dir.ok_or("calibration pack --out-dir is required")?,
     })
 }
 
@@ -328,7 +390,7 @@ fn replace_file(temp: &Path, destination: &Path) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_simulate, parse_verify};
+    use super::{parse_pack, parse_simulate, parse_verify};
 
     #[test]
     fn parser_requires_unique_options() {
@@ -368,5 +430,27 @@ mod tests {
         assert!(parse_simulate(&args)
             .unwrap_err()
             .contains("duplicate calibration simulation option --out-dir"));
+    }
+
+    #[test]
+    fn pack_parser_requires_unique_options() {
+        let args = [
+            "pack",
+            "capture.json",
+            "--model",
+            "model.bin",
+            "--target",
+            "target.yaml",
+            "--out-dir",
+            "out",
+            "--out-dir",
+            "other",
+        ]
+        .into_iter()
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+        assert!(parse_pack(&args)
+            .unwrap_err()
+            .contains("duplicate calibration pack option --out-dir"));
     }
 }

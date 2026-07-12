@@ -6,11 +6,16 @@ __all__ = [
     "check",
     "load_profile",
     "optimize",
+    "optimize_sweep",
+    "pack_calibration",
     "render",
     "render_optimization",
+    "render_optimization_validation",
+    "render_optimization_sweep",
     "render_calibration",
     "simulate_calibration",
     "verify_calibration",
+    "validate_optimization",
 ]
 
 

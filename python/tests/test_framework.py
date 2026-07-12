@@ -152,6 +152,42 @@ class FrameworkTests(unittest.TestCase):
         self.assertEqual(python_plan["schema"], "edgefit.optimization_plan.v1")
         self.assertEqual(python_plan["status"], "fail")
 
+    def test_optimizer_validation_matches_rust_cli(self) -> None:
+        model = ROOT / "examples/models/virtual_npu_tiny.edgefit.json"
+        target = ROOT / "targets/virtual-npu.yaml"
+        python_report = edgefit.validate_optimization(model, target)
+
+        completed = run_rust_cli(
+            "optimize",
+            "validate",
+            str(model),
+            "--target",
+            str(target),
+            "--format",
+            "json",
+        )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertEqual(python_report, json.loads(completed.stdout))
+        self.assertEqual(python_report["schema"], "edgefit.optimizer_validation.v1")
+
+    def test_optimizer_sweep_matches_rust_cli(self) -> None:
+        model = ROOT / "examples/models/virtual_npu_tiny.edgefit.json"
+        manifest = ROOT / "examples/optimizer/virtual-npu-profile-matrix.json"
+        python_report = edgefit.optimize_sweep(model, manifest)
+
+        completed = run_rust_cli(
+            "optimize",
+            "sweep",
+            str(model),
+            "--manifest",
+            str(manifest),
+            "--format",
+            "json",
+        )
+        self.assertIn(completed.returncode, {0, 1}, completed.stderr)
+        self.assertEqual(python_report, json.loads(completed.stdout))
+        self.assertEqual(python_report["schema"], "edgefit.optimization_matrix.v1")
+
     def test_calibration_matches_rust_cli_in_json_and_markdown(self) -> None:
         model = ROOT / "examples/models/good_tiny.edgefit.json"
         target = ROOT / "targets/esp32s3.yaml"
@@ -256,6 +292,44 @@ class FrameworkTests(unittest.TestCase):
             for name in (
                 "simulator-runtime.bin",
                 "simulation-trace.json",
+                "evidence.json",
+                "verification.json",
+                "verification.md",
+            ):
+                self.assertEqual(
+                    (python_out / name).read_bytes(),
+                    (rust_out / name).read_bytes(),
+                    name,
+                )
+
+    def test_calibration_pack_matches_rust_cli(self) -> None:
+        capture = ROOT / "examples/calibration/external-capture.example.json"
+        model = ROOT / "examples/models/virtual_npu_tiny.edgefit.json"
+        target = ROOT / "targets/virtual-npu.yaml"
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            python_out = directory / "python"
+            rust_out = directory / "rust"
+            python_report = edgefit.pack_calibration(
+                capture, model, target, python_out
+            )
+            completed = run_rust_cli(
+                "calibration",
+                "pack",
+                str(capture),
+                "--model",
+                str(model),
+                "--target",
+                str(target),
+                "--out-dir",
+                str(rust_out),
+            )
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            self.assertEqual(python_report, json.loads(completed.stdout))
+            for name in (
+                "capture.json",
+                "external-runtime.example.bin",
+                "external-runtime.example.log",
                 "evidence.json",
                 "verification.json",
                 "verification.md",

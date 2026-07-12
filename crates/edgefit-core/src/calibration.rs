@@ -8,11 +8,11 @@ use std::io::{ErrorKind, Read};
 use std::path::{Component, Path, PathBuf};
 
 use edgefit_calibration::{
-    parse_evidence, parse_simulation_scenario, render_evidence_json, render_verification_json,
-    render_verification_markdown, sha256_hex, verify, Attachment, Bindings, Capture, CheckStatus,
-    Environment, Evidence, ExpectedBindings, Identity, LoadedAttachment, Measurements,
-    RuntimeResult, Thresholds, Verification, VerificationBudget, MAX_ATTACHMENT_BYTES,
-    SIMULATION_TRACE_SCHEMA,
+    parse_capture_manifest, parse_evidence, parse_simulation_scenario, render_evidence_json,
+    render_verification_json, render_verification_markdown, sha256_hex, verify, Attachment,
+    Bindings, Capture, CheckStatus, Environment, Evidence, ExpectedBindings, Identity,
+    LoadedAttachment, Measurements, RuntimeResult, Thresholds, Verification, VerificationBudget,
+    MAX_ATTACHMENT_BYTES, SIMULATION_TRACE_SCHEMA,
 };
 use edgefit_analyze::analyze;
 use edgefit_ir::{
@@ -34,9 +34,22 @@ const TRACE_FILE: &str = "simulation-trace.json";
 const EVIDENCE_FILE: &str = "evidence.json";
 const VERIFICATION_JSON_FILE: &str = "verification.json";
 const VERIFICATION_MARKDOWN_FILE: &str = "verification.md";
+const CAPTURE_FILE: &str = "capture.json";
+const PACK_CONTROL_FILES: &[&str] = &[
+    CAPTURE_FILE,
+    EVIDENCE_FILE,
+    VERIFICATION_JSON_FILE,
+    VERIFICATION_MARKDOWN_FILE,
+];
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CalibrationSimulationResult {
+    pub status: String,
+    pub verification_json: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CalibrationPackResult {
     pub status: String,
     pub verification_json: String,
 }
@@ -192,6 +205,160 @@ pub fn render_calibration_files(
 ) -> EdgeFitResult<String> {
     render_calibration_files_with_status(evidence_path, model_path, target_path, format)
         .map(|(_, rendered)| rendered)
+}
+
+/// 将外部采集清单与原始附件打包为 hash-bound Calibration v1 证据目录。
+pub fn pack_calibration_files(
+    capture_path: impl AsRef<Path>,
+    model_path: impl AsRef<Path>,
+    target_path: impl AsRef<Path>,
+    out_dir: impl AsRef<Path>,
+) -> EdgeFitResult<CalibrationPackResult> {
+    let capture_path = capture_path.as_ref();
+    let model_path = model_path.as_ref();
+    let target_path = target_path.as_ref();
+    let out_dir = out_dir.as_ref();
+    let capture_bytes = read_bounded_regular_file(capture_path, MAX_SCENARIO_BYTES, "capture")?;
+    let capture_text = std::str::from_utf8(&capture_bytes)
+        .map_err(|error| format!("calibration capture is not UTF-8: {error}"))?;
+    let manifest = parse_capture_manifest(capture_text)
+        .map_err(|error| format!("invalid calibration capture: {error}"))?;
+    if manifest
+        .attachments
+        .iter()
+        .any(|attachment| matches!(attachment.name.as_str(), "capture-manifest" | "runtime-binary"))
+    {
+        return Err(
+            "capture attachment names capture-manifest and runtime-binary are reserved".to_string(),
+        );
+    }
+
+    let model_bytes = read_bounded_regular_file(model_path, MAX_MODEL_BYTES, "model")?;
+    let target_bytes = read_bounded_regular_file(target_path, MAX_TARGET_BYTES, "target profile")?;
+    let target_text = std::str::from_utf8(&target_bytes)
+        .map_err(|error| format!("target profile is not UTF-8: {error}"))?;
+    let profile = parse_profile(target_text, target_path.to_path_buf())?;
+    profile.validate()?;
+    let arena_budget_bytes = profile
+        .peak_activation_budget_bytes
+        .ok_or_else(|| "target profile has no peak activation budget".to_string())?;
+
+    let capture_parent = capture_path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    reject_pack_control_path(&manifest.runtime_binary)?;
+    let runtime_path = safe_relative_attachment_path(&manifest.runtime_binary)?;
+    let runtime_bytes = load_capture_attachment(capture_parent, &manifest.runtime_binary)?;
+    let mut packed_files = vec![
+        (PathBuf::from(CAPTURE_FILE), capture_bytes.clone()),
+        (runtime_path, runtime_bytes.clone()),
+    ];
+    let mut evidence_attachments = vec![
+        attachment_record(
+            "capture-manifest",
+            CAPTURE_FILE,
+            "application/json",
+            &capture_bytes,
+        )?,
+        attachment_record(
+            "runtime-binary",
+            &manifest.runtime_binary,
+            "application/octet-stream",
+            &runtime_bytes,
+        )?,
+    ];
+    for attachment in &manifest.attachments {
+        reject_pack_control_path(&attachment.path)?;
+        let bytes = load_capture_attachment(capture_parent, &attachment.path)?;
+        evidence_attachments.push(attachment_record(
+            &attachment.name,
+            &attachment.path,
+            &attachment.media_type,
+            &bytes,
+        )?);
+        packed_files.push((safe_relative_attachment_path(&attachment.path)?, bytes));
+    }
+
+    let evidence = Evidence {
+        identity: Identity {
+            target_id: profile.target_id,
+            device_id: manifest.identity.device_id,
+            runtime_name: manifest.identity.runtime_name,
+            runtime_version: manifest.identity.runtime_version,
+        },
+        environment: manifest.environment,
+        capture: Capture {
+            captured_at: manifest.capture.captured_at,
+            command: manifest.capture.command,
+            warmup_runs: manifest.capture.warmup_runs,
+            measured_runs: u64::try_from(manifest.measurements.latency_ns.len())
+                .map_err(|_| "capture sample count cannot be represented".to_string())?,
+        },
+        bindings: Bindings {
+            model_sha256: sha256_hex(&model_bytes),
+            target_profile_sha256: sha256_hex(&target_bytes),
+            runtime_binary_sha256: sha256_hex(&runtime_bytes),
+        },
+        runtime: manifest.runtime,
+        measurements: Measurements {
+            arena_high_water_bytes: manifest.measurements.arena_high_water_bytes,
+            latency_ns: manifest.measurements.latency_ns,
+        },
+        thresholds: Thresholds {
+            arena_budget_bytes,
+            p95_latency_budget_ns: manifest.p95_latency_budget_ns,
+        },
+        attachments: evidence_attachments,
+    };
+    publish_pack_directory(
+        out_dir,
+        model_path,
+        target_path,
+        &packed_files,
+        &render_evidence_json(&evidence),
+    )
+}
+
+fn reject_pack_control_path(path: &str) -> EdgeFitResult<()> {
+    if PACK_CONTROL_FILES
+        .iter()
+        .any(|control| path.eq_ignore_ascii_case(control))
+    {
+        return Err(format!(
+            "capture attachment path {path} is reserved by the calibration pack"
+        ));
+    }
+    Ok(())
+}
+
+fn attachment_record(
+    name: &str,
+    path: &str,
+    media_type: &str,
+    bytes: &[u8],
+) -> EdgeFitResult<Attachment> {
+    Ok(Attachment {
+        name: name.to_string(),
+        path: path.to_string(),
+        media_type: media_type.to_string(),
+        bytes: u64::try_from(bytes.len())
+            .map_err(|_| format!("attachment {name} size cannot be represented"))?,
+        sha256: sha256_hex(bytes),
+    })
+}
+
+fn load_capture_attachment(parent: &Path, declared: &str) -> EdgeFitResult<Vec<u8>> {
+    let parent = fs::canonicalize(parent)
+        .map_err(|error| format!("failed to resolve capture directory: {error}"))?;
+    let relative = safe_relative_attachment_path(declared)?;
+    reject_symlink_components(&parent, &relative)?;
+    let path = fs::canonicalize(parent.join(&relative))
+        .map_err(|error| format!("failed to resolve capture attachment {declared}: {error}"))?;
+    if !path.starts_with(&parent) {
+        return Err(format!("capture attachment {declared} escapes its directory"));
+    }
+    read_bounded_regular_file(&path, MAX_ATTACHMENT_BYTES, "capture attachment")
 }
 
 /// 使用规范化模型文件生成确定性模拟证据，并在目录发布前完成 v1 验证。
@@ -581,6 +748,80 @@ fn publish_simulation_directory(
         fs::rename(&temporary, out_dir)
             .map_err(|error| format!("failed to publish simulation directory: {error}"))?;
         Ok(CalibrationSimulationResult {
+            status: if verification.status == CheckStatus::Pass {
+                "pass".to_string()
+            } else {
+                "fail".to_string()
+            },
+            verification_json,
+        })
+    })();
+    if result.is_err() {
+        let _ = fs::remove_dir_all(&temporary);
+    }
+    result
+}
+
+fn publish_pack_directory(
+    out_dir: &Path,
+    model_path: &Path,
+    target_path: &Path,
+    packed_files: &[(PathBuf, Vec<u8>)],
+    evidence: &str,
+) -> EdgeFitResult<CalibrationPackResult> {
+    if out_dir.exists() {
+        return Err(format!(
+            "calibration pack output directory already exists: {}",
+            out_dir.display()
+        ));
+    }
+    let parent = out_dir
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    fs::create_dir_all(parent)
+        .map_err(|error| format!("failed to create pack output parent: {error}"))?;
+    let name = out_dir
+        .file_name()
+        .and_then(|value| value.to_str())
+        .ok_or("calibration pack output directory requires a UTF-8 name")?;
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|error| format!("system clock error: {error}"))?
+        .as_nanos();
+    let temporary = parent.join(format!(
+        ".{name}.edgefit-pack-{}-{stamp}.tmp",
+        std::process::id()
+    ));
+    fs::create_dir(&temporary)
+        .map_err(|error| format!("failed to create temporary pack directory: {error}"))?;
+    let result: EdgeFitResult<CalibrationPackResult> = (|| {
+        for (relative, bytes) in packed_files {
+            if let Some(parent) = relative.parent().filter(|path| !path.as_os_str().is_empty()) {
+                fs::create_dir_all(temporary.join(parent)).map_err(|error| {
+                    format!("failed to create pack attachment directory: {error}")
+                })?;
+            }
+            write_synced_file(&temporary.join(relative), bytes)?;
+        }
+        write_synced_file(&temporary.join(EVIDENCE_FILE), evidence.as_bytes())?;
+        let verification = verify_calibration_files(
+            temporary.join(EVIDENCE_FILE),
+            model_path,
+            target_path,
+        )?;
+        let verification_json = render_verification_json(&verification);
+        write_synced_file(
+            &temporary.join(VERIFICATION_JSON_FILE),
+            verification_json.as_bytes(),
+        )?;
+        write_synced_file(
+            &temporary.join(VERIFICATION_MARKDOWN_FILE),
+            render_verification_markdown(&verification).as_bytes(),
+        )?;
+        fs::rename(&temporary, out_dir)
+            .map_err(|error| format!("failed to publish calibration pack: {error}"))?;
+        Ok(CalibrationPackResult {
             status: if verification.status == CheckStatus::Pass {
                 "pass".to_string()
             } else {

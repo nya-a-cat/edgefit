@@ -308,10 +308,17 @@ def prepare_generated_model(
     spec: dict[str, Any],
     output_dir: Path,
 ) -> tuple[dict[str, Any], Path]:
-    """生成确定性线性图，分别覆盖 verifier 与模拟 optimizer 的托管规模证据。"""
+    """生成确定性拓扑，覆盖 verifier、optimizer、分段与 fan-out 压力证据。"""
     kind = spec.get("kind")
     require(
-        kind in {"linear_relu_chain", "linear_op_chain"},
+        kind
+        in {
+            "linear_relu_chain",
+            "linear_op_chain",
+            "diamond_chain",
+            "fanout_merge",
+            "residual_chain",
+        },
         f"unsupported generator for {case_id}",
     )
     node_count = spec.get("node_count")
@@ -321,8 +328,8 @@ def prepare_generated_model(
     require(
         isinstance(node_count, int)
         and not isinstance(node_count, bool)
-        and 1 <= node_count <= 100_000,
-        f"generated node_count for {case_id} must be between 1 and 100000",
+        and 1 <= node_count <= 1_000_000,
+        f"generated node_count for {case_id} must be between 1 and 1000000",
     )
     require(
         isinstance(tensor_elements, int)
@@ -334,11 +341,14 @@ def prepare_generated_model(
     if kind == "linear_relu_chain":
         require(dtype == "float32", f"generated dtype for {case_id} must be float32")
         require(op_type == "Relu", f"generated op_type for {case_id} must be Relu")
-    else:
+    elif kind == "linear_op_chain":
         require(
             op_type in {"Relu", "HardSwish"},
             f"generated op_type for {case_id} must be Relu or HardSwish",
         )
+    else:
+        require(dtype == "int8", f"generated dtype for {case_id} must be int8")
+        require(op_type == "Relu", f"generated op_type for {case_id} must be Relu")
 
     generator_fingerprint = hashlib.sha256(
         json.dumps(spec, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode(
@@ -346,21 +356,64 @@ def prepare_generated_model(
         )
     ).hexdigest()
 
-    values = [
-        {"name": f"v{index}", "dtype": dtype, "shape": [1, tensor_elements]}
-        for index in range(node_count - 1)
-    ]
-    nodes = []
-    for index in range(node_count):
+    nodes: list[dict[str, Any]] = []
+    tensors: list[str] = []
+
+    def append_node(kind: str, inputs: list[str]) -> str:
+        index = len(nodes)
+        output = f"v{index}"
         nodes.append(
             {
-                "name": f"{op_type.lower()}_{index}",
+                "name": f"{kind.lower()}_{index}",
                 "domain": "ai.onnx",
-                "op_type": op_type,
-                "inputs": ["input" if index == 0 else f"v{index - 1}"],
-                "outputs": [f"v{index}"],
+                "op_type": kind,
+                "inputs": inputs,
+                "outputs": [output],
             }
         )
+        tensors.append(output)
+        return output
+
+    current = "input"
+    if kind in {"linear_relu_chain", "linear_op_chain"}:
+        for _ in range(node_count):
+            current = append_node(op_type, [current])
+    elif kind == "diamond_chain":
+        while len(nodes) < node_count:
+            remaining = node_count - len(nodes)
+            if remaining >= 3:
+                left = append_node("Relu", [current])
+                right = append_node("Relu", [current])
+                current = append_node("Add", [left, right])
+            else:
+                current = append_node("Relu", [current])
+    elif kind == "fanout_merge":
+        while len(nodes) < node_count:
+            remaining = node_count - len(nodes)
+            if remaining >= 5:
+                first = append_node("Relu", [current])
+                second = append_node("Relu", [current])
+                third = append_node("Relu", [current])
+                merged = append_node("Add", [first, second])
+                current = append_node("Add", [merged, third])
+            else:
+                current = append_node("Relu", [current])
+    else:
+        previous = "input"
+        while len(nodes) < node_count:
+            remaining = node_count - len(nodes)
+            transformed = append_node("Relu", [current])
+            if remaining >= 2:
+                next_value = append_node("Add", [transformed, previous])
+                previous, current = current, next_value
+            else:
+                current = transformed
+
+    values = [
+        {"name": name, "dtype": dtype, "shape": [1, tensor_elements]}
+        for name in tensors
+        if name != current
+    ]
     data = {
         "schema": "edgefit.normalized_model.v1",
         "model": {
@@ -373,7 +426,7 @@ def prepare_generated_model(
         "graph": {
             "inputs": [{"name": "input", "dtype": dtype, "shape": [1, tensor_elements]}],
             "values": values,
-            "outputs": [{"name": f"v{node_count - 1}", "dtype": dtype, "shape": [1, tensor_elements]}],
+            "outputs": [{"name": current, "dtype": dtype, "shape": [1, tensor_elements]}],
             "initializers": [],
             "nodes": nodes,
         },
@@ -420,7 +473,7 @@ def run_case(
     )
     edgefit_command = case_spec.get("edgefit_command", "check")
     require(
-        edgefit_command in {"check", "optimize"},
+        edgefit_command in {"check", "optimize", "optimize_validate"},
         f"invalid edgefit_command for {case_id}: {edgefit_command}",
     )
     expected_edgefit_status = case_spec.get("expected_edgefit_status", "completed")
@@ -432,19 +485,42 @@ def run_case(
         edgefit_command == "check" or selected_tools == ("edgefit",),
         f"case {case_id} optimize evidence only supports the edgefit tool",
     )
+    retain_edgefit_artifact = case_spec.get("retain_edgefit_artifact", True)
+    require(
+        isinstance(retain_edgefit_artifact, bool),
+        f"retain_edgefit_artifact for {case_id} must be boolean",
+    )
+    case_repetitions = case_spec.get("edgefit_repetitions", edgefit_repetitions)
+    require(
+        isinstance(case_repetitions, int)
+        and not isinstance(case_repetitions, bool)
+        and 1 <= case_repetitions <= 20,
+        f"edgefit_repetitions for {case_id} must be between 1 and 20",
+    )
     case_dir = out_dir / "artifacts" / case_id
     case_dir.mkdir(parents=True, exist_ok=True)
     tools = {}
     if "edgefit" in selected_tools:
-        artifact_name = (
-            "edgefit-plan.json" if edgefit_command == "optimize" else "edgefit-report.json"
-        )
+        artifact_name = {
+            "check": "edgefit-report.json",
+            "optimize": "edgefit-plan.json",
+            "optimize_validate": "edgefit-validation.json",
+        }[edgefit_command]
         artifact = case_dir / artifact_name
+        command_prefix = (
+            [str(edgefit), "optimize", "validate"]
+            if edgefit_command == "optimize_validate"
+            else [str(edgefit), edgefit_command]
+        )
+        parser = {
+            "check": parse_edgefit,
+            "optimize": parse_edgefit_plan,
+            "optimize_validate": parse_edgefit_validation,
+        }[edgefit_command]
         tools["edgefit"] = run_tool(
             "edgefit",
-            [
-                str(edgefit),
-                edgefit_command,
+            command_prefix
+            + [
                 str(model_path),
                 "--target",
                 str(target),
@@ -456,11 +532,12 @@ def run_case(
             case_dir,
             timeout,
             {0, 1},
-            parse_edgefit_plan if edgefit_command == "optimize" else parse_edgefit,
+            parser,
             artifact,
             {**os.environ, "EDGEFIT_PYTHON": python},
-            repetitions=edgefit_repetitions,
+            repetitions=case_repetitions,
             measure_peak_rss=measure_peak_rss,
+            retain_artifact=retain_edgefit_artifact,
         )
     if "ort-mobile" in selected_tools:
         tools["ort-mobile"] = run_tool(
@@ -556,6 +633,9 @@ def evaluate_case_expectations(
             "required_plan_blockers",
             "expected_plan_recipe_ids",
             "require_plan_latency_improvement",
+            "expected_validation_status",
+            "require_no_missed_feasibility",
+            "max_validation_latency_gap_ppm",
         }
     )
     require(not unknown, f"unknown expectations for {case_spec.get('id')}: {', '.join(unknown)}")
@@ -605,6 +685,31 @@ def evaluate_case_expectations(
         require(isinstance(expected, bool), "require_deterministic_artifact must be boolean")
         actual = edgefit.get("artifact_deterministic")
         add("require_deterministic_artifact", actual, expected, actual is expected)
+
+    if "expected_validation_status" in spec:
+        expected = spec["expected_validation_status"]
+        require(expected in {"pass", "fail"}, "expected_validation_status must be pass or fail")
+        actual = edgefit.get("observations", {}).get("validation_status")
+        add("expected_validation_status", actual, expected, actual == expected)
+    if "require_no_missed_feasibility" in spec:
+        expected = spec["require_no_missed_feasibility"]
+        require(isinstance(expected, bool), "require_no_missed_feasibility must be boolean")
+        delta = edgefit.get("observations", {}).get("blocker_delta")
+        actual = isinstance(delta, int) and not isinstance(delta, bool) and delta == 0
+        add("require_no_missed_feasibility", actual, expected, actual is expected)
+    if "max_validation_latency_gap_ppm" in spec:
+        limit = spec["max_validation_latency_gap_ppm"]
+        require(
+            isinstance(limit, int) and not isinstance(limit, bool) and limit >= 0,
+            "max_validation_latency_gap_ppm must be a non-negative integer",
+        )
+        actual = edgefit.get("observations", {}).get("latency_gap_ppm")
+        add(
+            "max_validation_latency_gap_ppm",
+            actual,
+            limit,
+            isinstance(actual, int) and not isinstance(actual, bool) and actual <= limit,
+        )
 
     observations = edgefit.get("observations", {})
     if "expected_plan_status" in spec:
@@ -773,9 +878,11 @@ def run_tool(
     env: dict[str, str] | None = None,
     repetitions: int = 1,
     measure_peak_rss: bool = False,
+    retain_artifact: bool = True,
 ) -> dict[str, Any]:
     processes = []
     artifact_hashes = []
+    artifact_sizes = []
     for _ in range(repetitions):
         if artifact and artifact.is_file():
             artifact.unlink()
@@ -783,6 +890,7 @@ def run_tool(
         processes.append(process)
         if artifact and artifact.is_file():
             artifact_hashes.append(sha256(artifact))
+            artifact_sizes.append(artifact.stat().st_size)
     statuses = [process_status(process, accepted_codes) for process in processes]
     exit_codes = {process["exit_code"] for process in processes}
     process = processes[-1]
@@ -810,7 +918,8 @@ def run_tool(
                 observations = parser(combined, artifact)
                 if name == "edgefit":
                     artifact_status = observations.get(
-                        "plan_status", observations.get("verdict")
+                        "validation_status",
+                        observations.get("plan_status", observations.get("verdict")),
                     )
                     expected_exit_code = {"pass": 0, "fail": 1}.get(artifact_status)
                     if expected_exit_code is None:
@@ -834,8 +943,10 @@ def run_tool(
     write_text(stdout_path, stdout)
     write_text(stderr_path, stderr)
     artifacts = [evidence_file(stdout_path), evidence_file(stderr_path)]
-    if artifact and artifact.is_file():
+    if artifact and artifact.is_file() and retain_artifact:
         artifacts.insert(0, evidence_file(artifact))
+    elif artifact and artifact.is_file():
+        artifact.unlink()
     if not detail and status != "completed":
         detail = first_nonempty(stderr.strip(), stdout.strip())[:1000]
     result = {
@@ -849,6 +960,8 @@ def run_tool(
         ),
         "peak_rss_samples_bytes": [item.get("peak_rss_bytes") for item in processes],
         "artifact_sha256_samples": [f"sha256:{value}" for value in artifact_hashes],
+        "artifact_size_bytes": max(artifact_sizes, default=None),
+        "artifact_retained": retain_artifact,
         "artifact_deterministic": len(artifact_hashes) == repetitions
         and len(set(artifact_hashes)) <= 1,
         "command": [sanitize(arg) for arg in command],
@@ -942,6 +1055,86 @@ def parse_edgefit(_: str, artifact: Path | None) -> dict[str, Any]:
         "quantization_operator_coverage": metrics.get("quantization_operator_coverage"),
         "node_count": metrics.get("node_count"),
         "tensor_count": metrics.get("tensor_count"),
+    }
+
+
+def parse_edgefit_validation(_: str, artifact: Path | None) -> dict[str, Any]:
+    """验证 bounded oracle 证据的自洽性，不把模拟差距解释为硬件误差。"""
+    require(artifact is not None, "EdgeFit validation path is missing")
+    report = read_json(artifact)
+    require(
+        report.get("schema") == "edgefit.optimizer_validation.v1",
+        "unsupported EdgeFit optimizer validation schema",
+    )
+    require(report.get("status") in {"pass", "fail"}, "invalid validation status")
+    require(
+        report.get("scope") == "placement_under_deterministic_spill_scheduler",
+        "invalid optimizer validation scope",
+    )
+    enumerated = report.get("enumerated_plans")
+    require(
+        isinstance(enumerated, int)
+        and not isinstance(enumerated, bool)
+        and 1 <= enumerated <= 65_536,
+        "invalid optimizer oracle enumeration count",
+    )
+    greedy = report.get("greedy")
+    oracle = report.get("oracle")
+    quality = report.get("quality")
+    require(isinstance(greedy, dict), "validation has no greedy plan")
+    require(isinstance(oracle, dict), "validation has no oracle plan")
+    require(isinstance(quality, dict), "validation has no quality object")
+    for label, plan in (("greedy", greedy), ("oracle", oracle)):
+        require(
+            plan.get("schema") == "edgefit.optimization_plan.v1",
+            f"validation {label} plan has invalid schema",
+        )
+        require(plan.get("status") in {"pass", "fail"}, f"invalid {label} plan status")
+        proposed = plan.get("proposed")
+        require(isinstance(proposed, dict), f"validation {label} plan has no proposed object")
+        require(
+            isinstance(proposed.get("blockers"), int)
+            and not isinstance(proposed["blockers"], bool)
+            and proposed["blockers"] >= 0,
+            f"validation {label} blocker count is invalid",
+        )
+        require(
+            isinstance(plan.get("plan_hash"), str)
+            and re.fullmatch(r"fnv1a64:[0-9A-Fa-f]{16}", plan["plan_hash"]) is not None,
+            f"validation {label} plan hash is invalid",
+        )
+    blocker_delta = quality.get("blocker_delta")
+    require(
+        isinstance(blocker_delta, int) and not isinstance(blocker_delta, bool),
+        "validation blocker_delta must be an integer",
+    )
+    expected_delta = greedy["proposed"]["blockers"] - oracle["proposed"]["blockers"]
+    require(blocker_delta == expected_delta, "validation blocker_delta is inconsistent")
+    expected_status = "fail" if blocker_delta > 0 else "pass"
+    require(report["status"] == expected_status, "validation status is inconsistent")
+    for field in ("latency_gap_ns", "latency_gap_ppm"):
+        value = quality.get(field)
+        require(
+            value is None
+            or (isinstance(value, int) and not isinstance(value, bool) and value >= 0),
+            f"validation {field} must be a non-negative integer or null",
+        )
+    require(
+        isinstance(report.get("validation_hash"), str)
+        and re.fullmatch(r"fnv1a64:[0-9A-Fa-f]{16}", report["validation_hash"])
+        is not None,
+        "validation hash is invalid",
+    )
+    return {
+        "validation_status": report["status"],
+        "enumerated_plans": enumerated,
+        "blocker_delta": blocker_delta,
+        "latency_gap_ns": quality.get("latency_gap_ns"),
+        "latency_gap_ppm": quality.get("latency_gap_ppm"),
+        "greedy_plan_hash": greedy["plan_hash"],
+        "oracle_plan_hash": oracle["plan_hash"],
+        "greedy_plan_status": greedy["status"],
+        "oracle_plan_status": oracle["status"],
     }
 
 
