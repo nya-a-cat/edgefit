@@ -117,6 +117,9 @@ pub fn render_optimization_text(
     format: &str,
     adapter_generated: bool,
 ) -> EdgeFitResult<String> {
+    if !matches!(format, "json" | "markdown") {
+        return Err("optimization format must be json or markdown".to_string());
+    }
     let model = if adapter_generated {
         parse_cli_adapter_output(model_text)?
     } else {
@@ -136,7 +139,9 @@ fn check_loaded_model(
 }
 
 fn parse_target_text(text: &str, source: &str) -> EdgeFitResult<TargetProfile> {
-    parse_profile(text, PathBuf::from(source))
+    let profile = parse_profile(text, PathBuf::from(source))?;
+    profile.validate()?;
+    Ok(profile)
 }
 
 fn check_loaded_model_with_profile(

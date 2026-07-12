@@ -71,10 +71,14 @@ fn run_optimize(args: &[String]) -> Result<i32, String> {
         Ok(prepared) => prepared,
         Err(error) => return fail_with_execution_artifacts("optimize", &parsed, &error),
     };
-    let plan = if prepared.cli_adapter_output {
-        optimize_adapter_generated_model(&prepared.path, target)?
+    let result = if prepared.cli_adapter_output {
+        optimize_adapter_generated_model(&prepared.path, target)
     } else {
-        optimize_model(&prepared.path, target)?
+        optimize_model(&prepared.path, target)
+    };
+    let plan = match result {
+        Ok(plan) => plan,
+        Err(error) => return fail_with_execution_artifacts("optimize", &parsed, &error),
     };
     write_or_print(&render_plan(&plan, &parsed.format), parsed.out.as_deref())?;
     Ok(if plan.status == "fail" { EXIT_POLICY_FAIL } else { EXIT_PASS })
@@ -96,17 +100,18 @@ fn run_check(args: &[String]) -> Result<i32, String> {
         Ok(prepared) => prepared,
         Err(error) => return fail_with_execution_artifacts("check", &parsed, &error),
     };
-    let report = if prepared.cli_adapter_output {
-        match check_adapter_generated_model_with_suppressions(
+    let result = if prepared.cli_adapter_output {
+        check_adapter_generated_model_with_suppressions(
             &prepared.path,
             target,
             &parsed.suppressions,
-        ) {
-            Ok(report) => report,
-            Err(error) => return fail_with_execution_artifacts("check", &parsed, &error),
-        }
+        )
     } else {
-        check_model_with_suppressions(&prepared.path, target, &parsed.suppressions)?
+        check_model_with_suppressions(&prepared.path, target, &parsed.suppressions)
+    };
+    let report = match result {
+        Ok(report) => report,
+        Err(error) => return fail_with_execution_artifacts("check", &parsed, &error),
     };
     write_or_print(
         &render_report(&report, &parsed.format),
@@ -130,13 +135,14 @@ fn run_snapshot(args: &[String]) -> Result<i32, String> {
         Ok(prepared) => prepared,
         Err(error) => return fail_with_execution_artifacts("snapshot", &parsed, &error),
     };
-    let report = if prepared.cli_adapter_output {
-        match check_adapter_generated_model_with_suppressions(&prepared.path, target, &[]) {
-            Ok(report) => report,
-            Err(error) => return fail_with_execution_artifacts("snapshot", &parsed, &error),
-        }
+    let result = if prepared.cli_adapter_output {
+        check_adapter_generated_model_with_suppressions(&prepared.path, target, &[])
     } else {
-        check_model(&prepared.path, target)?
+        check_model(&prepared.path, target)
+    };
+    let report = match result {
+        Ok(report) => report,
+        Err(error) => return fail_with_execution_artifacts("snapshot", &parsed, &error),
     };
     write_or_print(&render_snapshot(&report), Some(out))?;
     Ok(if report.status == "fail" {

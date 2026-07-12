@@ -452,6 +452,7 @@ pub fn parse_profile(text: &str, source: PathBuf) -> EdgeFitResult<TargetProfile
     let mut fp32_allowed = None;
     let mut max_opset_versions = BTreeMap::new();
     let mut allowed_ops = BTreeMap::new();
+    let mut accelerator_section_present = false;
     let mut accelerator_id = None;
     let mut accelerator_confidence = None;
     let mut accelerator_scratchpad_bytes = None;
@@ -499,6 +500,9 @@ pub fn parse_profile(text: &str, source: PathBuf) -> EdgeFitResult<TargetProfile
                 return Err(format!("unsupported profile section {key}"));
             }
             state.section = key.to_string();
+            if key == "accelerator" {
+                accelerator_section_present = true;
+            }
             state.ops_allow = false;
             state.ops_domain.clear();
             state.current_op = None;
@@ -660,6 +664,11 @@ pub fn parse_profile(text: &str, source: PathBuf) -> EdgeFitResult<TargetProfile
         return Err("profile_version must be edgefit.target.v1".to_string());
     }
 
+    if accelerator_section_present
+        && accelerator_id.as_deref().is_none_or(str::is_empty)
+    {
+        return Err("accelerator.id is required when an accelerator section is declared".to_string());
+    }
     let accelerator = match accelerator_id {
         Some(id) => Some(AcceleratorProfile {
             id,
@@ -1313,6 +1322,16 @@ ops:
         let profile = parse_profile(text, PathBuf::from("target.yaml")).unwrap();
         let error = profile.validate().unwrap_err();
         assert!(error.contains("dtypes"));
+    }
+
+    #[test]
+    fn rejects_partial_accelerator_without_id() {
+        let text = include_str!("../../../targets/virtual-npu.yaml")
+            .replace("  id: generic-npu-v1\n", "");
+
+        let error = parse_profile(&text, PathBuf::from("target.yaml")).unwrap_err();
+
+        assert!(error.contains("accelerator.id is required"));
     }
 
     #[test]

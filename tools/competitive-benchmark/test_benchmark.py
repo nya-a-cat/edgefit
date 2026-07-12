@@ -10,6 +10,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 
 def load_benchmark_module():
@@ -102,40 +103,7 @@ class BenchmarkComparisonTests(unittest.TestCase):
         )
 
     def test_optimizer_plan_parser_and_expectations(self) -> None:
-        plan = {
-            "schema": "edgefit.optimization_plan.v1",
-            "status": "pass",
-            "model_sha256": "sha256:model",
-            "target_fingerprint": "fnv1a64:target",
-            "accelerator_id": "virtual-npu",
-            "confidence": "seed-simulated",
-            "baseline": {"blockers": 0, "latency_ns": 1000},
-            "proposed": {
-                "blockers": 0,
-                "latency_ns": 500,
-                "launch_ns": 100,
-                "compute_ns": 200,
-                "transfer_ns": 200,
-                "transfer_bytes": 128,
-                "spill_bytes": 64,
-                "peak_scratchpad_bytes": 96,
-            },
-            "assignments": [
-                {
-                    "device": "npu",
-                    "recipe_id": "recipe.hardswish.v1",
-                }
-            ],
-            "segments": [{"id": 0, "first_node": 0, "last_node": 0}],
-            "events": [
-                {"kind": "load"},
-                {"kind": "spill"},
-                {"kind": "reload"},
-                {"kind": "store"},
-            ],
-            "blockers": [],
-            "plan_hash": "fnv1a64:0123456789abcdef",
-        }
+        plan = self.valid_plan()
         case = {
             "id": "optimizer",
             "expectations": {
@@ -174,6 +142,69 @@ class BenchmarkComparisonTests(unittest.TestCase):
         self.assertEqual(observations["assignment_device_counts"], {"npu": 1})
         self.assertEqual(observations["event_kind_counts"]["spill"], 1)
         self.assertTrue(observations["latency_improved"])
+        self.assertEqual(observations["target_id"], "virtual-npu")
+
+    def test_optimizer_plan_parser_rejects_bool_as_int(self) -> None:
+        plan = self.valid_plan()
+        plan["events"][0]["bytes"] = True
+
+        self.assert_plan_rejected(plan)
+
+    def test_optimizer_plan_parser_rejects_bad_assignment(self) -> None:
+        plan = self.valid_plan()
+        plan["assignments"][0]["node_index"] = 1
+
+        self.assert_plan_rejected(plan)
+
+    def test_optimizer_plan_parser_rejects_bad_segment(self) -> None:
+        plan = self.valid_plan()
+        plan["segments"][0]["last_node"] = 1
+
+        self.assert_plan_rejected(plan)
+
+    def test_optimizer_plan_parser_rejects_bad_event(self) -> None:
+        plan = self.valid_plan()
+        plan["events"][0]["kind"] = "copy"
+
+        self.assert_plan_rejected(plan)
+
+    def test_optimizer_plan_parser_rejects_metric_mismatch(self) -> None:
+        for field in ("transfer_bytes", "transfer_ns", "spill_bytes", "latency_ns"):
+            with self.subTest(field=field):
+                plan = self.valid_plan()
+                plan["proposed"][field] += 1
+                self.assert_plan_rejected(plan)
+
+    def test_optimizer_plan_parser_rejects_pass_with_blockers(self) -> None:
+        plan = self.valid_plan()
+        plan["blockers"] = ["node:0 unsupported"]
+        plan["proposed"]["blockers"] = 1
+
+        self.assert_plan_rejected(plan)
+
+    def test_optimizer_plan_parser_rejects_malformed_hash(self) -> None:
+        plan = self.valid_plan()
+        plan["plan_hash"] = "fnv1a64:not-hex"
+
+        self.assert_plan_rejected(plan)
+
+    def test_run_tool_rejects_inconsistent_repetition_exit_codes(self) -> None:
+        processes = [self.finished_process(0), self.finished_process(1)]
+        with tempfile.TemporaryDirectory() as directory:
+            with mock.patch.object(self.benchmark, "run_process", side_effect=processes):
+                result = self.benchmark.run_tool(
+                    "edgefit",
+                    ["edgefit", "optimize"],
+                    Path(directory),
+                    1,
+                    {0, 1},
+                    lambda _output, _artifact: {"parsed": True},
+                    repetitions=2,
+                )
+
+        self.assertEqual(result["status"], "runner_error")
+        self.assertIn("inconsistent exit codes", result["detail"])
+        self.assertEqual(result["observations"], {})
 
     def test_performance_expectations_fail_closed_on_missing_rss(self) -> None:
         case = {
@@ -226,6 +257,71 @@ class BenchmarkComparisonTests(unittest.TestCase):
         )
         self.assertEqual(comparison["metrics"]["planned_activation_arena_bytes"]["delta"], -200)
         self.assertEqual(comparison["candidate"]["peak_op_type"], "QLinearConv")
+
+    def assert_plan_rejected(self, plan: dict) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "plan.json"
+            path.write_text(json.dumps(plan), encoding="utf-8")
+            with self.assertRaises(self.benchmark.InputError):
+                self.benchmark.parse_edgefit_plan("", path)
+
+    @staticmethod
+    def valid_plan() -> dict:
+        events = [
+            {"kind": "load", "tensor": "x", "bytes": 32, "at_node": 0, "latency_ns": 20},
+            {"kind": "spill", "tensor": "x", "bytes": 64, "at_node": 0, "latency_ns": 30},
+            {"kind": "reload", "tensor": "x", "bytes": 64, "at_node": 0, "latency_ns": 40},
+            {"kind": "store", "tensor": "y", "bytes": 32, "at_node": 0, "latency_ns": 110},
+        ]
+        return {
+            "schema": "edgefit.optimization_plan.v1",
+            "status": "pass",
+            "model_sha256": "sha256:model",
+            "target_id": "virtual-npu",
+            "target_fingerprint": "fnv1a64:target",
+            "accelerator_id": "virtual-npu",
+            "confidence": "seed-simulated",
+            "baseline": {"blockers": 0, "latency_ns": 1000},
+            "proposed": {
+                "blockers": 0,
+                "latency_ns": 500,
+                "launch_ns": 100,
+                "compute_ns": 200,
+                "transfer_ns": sum(item["latency_ns"] for item in events),
+                "transfer_bytes": sum(item["bytes"] for item in events),
+                "spill_bytes": sum(
+                    item["bytes"] for item in events if item["kind"] == "spill"
+                ),
+                "peak_scratchpad_bytes": 96,
+            },
+            "assignments": [
+                {
+                    "node_index": 0,
+                    "op_type": "HardSwish",
+                    "device": "npu",
+                    "kernel_id": "npu.hardswish.v1",
+                    "recipe_id": "recipe.hardswish.v1",
+                    "launch_ns": 100,
+                    "compute_ns": 200,
+                }
+            ],
+            "segments": [{"id": 0, "first_node": 0, "last_node": 0}],
+            "events": events,
+            "blockers": [],
+            "plan_hash": "fnv1a64:0123456789abcdef",
+            "future_extension": {"accepted": True},
+        }
+
+    @staticmethod
+    def finished_process(exit_code: int) -> dict:
+        return {
+            "state": "finished",
+            "exit_code": exit_code,
+            "duration_ms": 1,
+            "stdout": "",
+            "stderr": "",
+            "peak_rss_bytes": None,
+        }
 
     @staticmethod
     def case(case_id: str, file_bytes: int, arena_bytes: int, op: str, duration: int):
