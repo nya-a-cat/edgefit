@@ -1,0 +1,62 @@
+{
+  "schema": "edgefit.calibration_evidence.v1",
+  "identity": {
+    "target_id": "esp32-s3",
+    "device_id": "board-001",
+    "runtime_name": "tflm",
+    "runtime_version": "2.17.0"
+  },
+  "environment": {
+    "operating_system": "bare-metal",
+    "architecture": "xtensa-lx7",
+    "hardware": "ESP32-S3 rev 0.2",
+    "toolchain": "esp-idf 5.3.1"
+  },
+  "capture": {
+    "captured_at": "2026-07-12T12:34:56Z",
+    "command": "edgefit-device-run model.bin",
+    "warmup_runs": "3",
+    "measured_runs": "20"
+  },
+  "bindings": {
+    "model_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+    "target_profile_sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+    "runtime_binary_sha256": "3333333333333333333333333333333333333333333333333333333333333333"
+  },
+  "runtime": {
+    "accepted": true,
+    "rejected_reason": null
+  },
+  "measurements": {
+    "arena_high_water": {
+      "unit": "bytes",
+      "value": "9007199254740993"
+    },
+    "latency": {
+      "unit": "ns",
+      "samples": ["1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16", "17", "18", "19", "20"]
+    }
+  },
+  "thresholds": {
+    "arena_budget": {
+      "unit": "bytes",
+      "value": "9007199254740993"
+    },
+    "p95_latency_budget": {
+      "unit": "ns",
+      "value": "19"
+    }
+  },
+  "attachments": [
+    {
+      "name": "device-log",
+      "path": "logs/device.txt",
+      "media_type": "text/plain",
+      "bytes": "11",
+      "sha256": "c8f6fc2398e0e18482fcac2da4e4dd49c839cafbbf73956537e5f21a262c3ad0"
+    }
+  ],
+  "attestation": {
+    "kind": "none"
+  }
+}

@@ -1,6 +1,7 @@
 ﻿[workspace]
 members = [
   "crates/edgefit-analyze",
+  "crates/edgefit-calibration",
   "crates/edgefit-cli",
   "crates/edgefit-core",
   "crates/edgefit-diff",
