@@ -9,6 +9,7 @@ __all__ = [
     "render",
     "render_optimization",
     "render_calibration",
+    "simulate_calibration",
     "verify_calibration",
 ]
 

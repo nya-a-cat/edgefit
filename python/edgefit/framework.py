@@ -127,6 +127,38 @@ def render_calibration(
     return _run_calibration(evidence, model, target, format)[1]
 
 
+def simulate_calibration(
+    model: str | Path,
+    target: str | Path,
+    scenario: str | Path,
+    out_dir: str | Path,
+) -> dict[str, object]:
+    """生成明确标记为 simulated 的确定性 Calibration v1 证据目录。"""
+    _, rendered = _run_calibration_simulation(model, target, scenario, out_dir)
+    return json.loads(rendered)
+
+
+def _run_calibration_simulation(
+    model: str | Path,
+    target: str | Path,
+    scenario: str | Path,
+    out_dir: str | Path,
+) -> tuple[str, str]:
+    source_model = Path(model)
+    prepared = _prepare_model(source_model)
+    try:
+        return _native.simulate_calibration(
+            prepared.text,
+            prepared.adapter_generated,
+            str(source_model),
+            str(Path(target)),
+            str(Path(scenario)),
+            str(Path(out_dir)),
+        )
+    except ValueError as exc:
+        raise EdgeFitError(str(exc)) from exc
+
+
 def _run_calibration(
     evidence: str | Path,
     model: str | Path,

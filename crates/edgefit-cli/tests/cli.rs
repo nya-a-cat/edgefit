@@ -51,6 +51,8 @@ fn alpha_command_and_exit_code_contract_is_stable() {
     let help_text = String::from_utf8_lossy(&help.stdout);
     for command in [
         "target validate <profile>",
+        "calibration verify <evidence.json>",
+        "calibration simulate <model.onnx|model.edgefit.json>",
         "check <model.onnx|model.edgefit.json>",
         "optimize <model.onnx|model.edgefit.json>",
         "snapshot <model.onnx|model.edgefit.json>",
@@ -661,5 +663,59 @@ fn check_snapshot_and_optimize_share_the_zero_one_two_exit_contract() {
         assert!(error_contents.contains("edgefit.execution_error.v1"));
     }
 
+    fs::remove_dir_all(dir).expect("cleanup temp dir");
+}
+
+#[test]
+fn calibration_simulation_publishes_a_complete_deterministic_contract() {
+    let dir = unique_dir("calibration-simulation");
+    let out = dir.join("nominal");
+    let output = run(&[
+        "calibration",
+        "simulate",
+        &fixture("examples/models/virtual_npu_tiny.edgefit.json"),
+        "--target",
+        &fixture("targets/virtual-npu.yaml"),
+        "--scenario",
+        &fixture("examples/calibration/nominal.simulation.json"),
+        "--out-dir",
+        out.to_str().expect("simulation output path"),
+    ]);
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("\"schema\": \"edgefit.calibration_verification.v1\""));
+    assert!(stdout.contains("\"status\": \"pass\""));
+    for name in [
+        "simulator-runtime.bin",
+        "simulation-trace.json",
+        "evidence.json",
+        "verification.json",
+        "verification.md",
+    ] {
+        assert!(out.join(name).is_file(), "missing {name}");
+    }
+    let trace = fs::read_to_string(out.join("simulation-trace.json")).expect("trace");
+    assert!(trace.contains("\"confidence\": \"simulated\""));
+    assert!(trace.contains("not_real_hardware"));
+
+    let blocked = dir.join("blocked");
+    let failure = run(&[
+        "calibration",
+        "simulate",
+        &fixture("examples/models/virtual_npu_spill.edgefit.json"),
+        "--target",
+        &fixture("targets/virtual-npu-no-spill.yaml"),
+        "--scenario",
+        &fixture("examples/calibration/nominal.simulation.json"),
+        "--out-dir",
+        blocked.to_str().expect("blocked output path"),
+    ]);
+    assert_eq!(failure.status.code(), Some(2));
+    assert!(!blocked.exists());
     fs::remove_dir_all(dir).expect("cleanup temp dir");
 }

@@ -1,7 +1,11 @@
+//! Calibration 验证与模拟命令入口。
+//!
+//! 本模块只负责严格参数解析、退出码映射和原子输出，业务语义保留在 Rust core。
+
 use edgefit_calibration::{
     parse_evidence, render_verification_json, render_verification_markdown, CheckStatus,
 };
-use edgefit_core::verify_calibration_files;
+use edgefit_core::{simulate_calibration_files, verify_calibration_files};
 use edgefit_ir::escape_json;
 use std::fs;
 use std::io::Write;
@@ -21,14 +25,23 @@ struct CalibrationCommand {
 }
 
 pub fn run(args: &[String]) -> Result<i32, String> {
-    let parsed = parse(args)?;
+    match args.first().map(String::as_str) {
+        Some("verify") => run_verify(args),
+        Some("simulate") => run_simulate(args),
+        _ => Err("usage: edgefit calibration <verify|simulate> ...".to_string()),
+    }
+}
+
+fn run_verify(args: &[String]) -> Result<i32, String> {
+    let parsed = parse_verify(args)?;
     reject_output_aliases(&parsed)?;
     reject_attachment_output_aliases(&parsed)?;
 
-    let verification = match verify_calibration_files(&parsed.evidence, &parsed.model, &parsed.target) {
-        Ok(verification) => verification,
-        Err(error) => return fail_with_artifact(&parsed, &error),
-    };
+    let verification =
+        match verify_calibration_files(&parsed.evidence, &parsed.model, &parsed.target) {
+            Ok(verification) => verification,
+            Err(error) => return fail_with_artifact(&parsed, &error),
+        };
     let rendered = match parsed.format.as_str() {
         "json" => render_verification_json(&verification),
         "markdown" => render_verification_markdown(&verification),
@@ -42,7 +55,7 @@ pub fn run(args: &[String]) -> Result<i32, String> {
     })
 }
 
-fn parse(args: &[String]) -> Result<CalibrationCommand, String> {
+fn parse_verify(args: &[String]) -> Result<CalibrationCommand, String> {
     if args.len() < 2 || args[0] != "verify" {
         return Err(
             "usage: edgefit calibration verify <evidence.json> --model <model> --target <profile> [--format json|markdown] [--out path]"
@@ -83,6 +96,75 @@ fn parse(args: &[String]) -> Result<CalibrationCommand, String> {
         target: target.ok_or("calibration --target is required")?,
         format,
         out,
+    })
+}
+
+#[derive(Debug)]
+struct SimulationCommand {
+    model: PathBuf,
+    target: PathBuf,
+    scenario: PathBuf,
+    out_dir: PathBuf,
+}
+
+fn run_simulate(args: &[String]) -> Result<i32, String> {
+    let parsed = parse_simulate(args)?;
+    let prepared = crate::prepare_model(
+        parsed
+            .model
+            .to_str()
+            .ok_or("calibration simulation model path must be UTF-8")?,
+    )?;
+    let result = simulate_calibration_files(
+        &parsed.model,
+        &prepared.path,
+        prepared.cli_adapter_output,
+        &parsed.target,
+        &parsed.scenario,
+        &parsed.out_dir,
+    )?;
+    print!("{}", result.verification_json);
+    Ok(if result.status == "fail" {
+        EXIT_POLICY_FAIL
+    } else {
+        EXIT_PASS
+    })
+}
+
+fn parse_simulate(args: &[String]) -> Result<SimulationCommand, String> {
+    if args.len() < 2 || args[0] != "simulate" {
+        return Err(
+            "usage: edgefit calibration simulate <model.onnx|model.edgefit.json> --target <profile> --scenario <scenario.json> --out-dir <new-directory>"
+                .to_string(),
+        );
+    }
+    let model = PathBuf::from(&args[1]);
+    let mut target = None;
+    let mut scenario = None;
+    let mut out_dir = None;
+    let mut index = 2;
+    while index < args.len() {
+        let flag = args[index].as_str();
+        index += 1;
+        let value = args
+            .get(index)
+            .ok_or_else(|| format!("{flag} requires a value"))?;
+        match flag {
+            "--target" if target.is_none() => target = Some(PathBuf::from(value)),
+            "--scenario" if scenario.is_none() => scenario = Some(PathBuf::from(value)),
+            "--out-dir" if out_dir.is_none() => out_dir = Some(PathBuf::from(value)),
+            "--target" | "--scenario" | "--out-dir" => {
+                return Err(format!("duplicate calibration simulation option {flag}"));
+            }
+            other => return Err(format!("unexpected calibration simulation argument {other}")),
+        }
+        index += 1;
+    }
+    Ok(SimulationCommand {
+        model,
+        target: target.ok_or("calibration simulation --target is required")?,
+        scenario: scenario.ok_or("calibration simulation --scenario is required")?,
+        out_dir: out_dir.ok_or("calibration simulation --out-dir is required")?,
     })
 }
 
@@ -246,7 +328,7 @@ fn replace_file(temp: &Path, destination: &Path) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::parse;
+    use super::{parse_simulate, parse_verify};
 
     #[test]
     fn parser_requires_unique_options() {
@@ -263,6 +345,28 @@ mod tests {
         .into_iter()
         .map(str::to_string)
         .collect::<Vec<_>>();
-        assert!(parse(&args).unwrap_err().contains("duplicate calibration option --model"));
+        assert!(parse_verify(&args).unwrap_err().contains("duplicate calibration option --model"));
+    }
+
+    #[test]
+    fn simulation_parser_requires_unique_options() {
+        let args = [
+            "simulate",
+            "model.edgefit.json",
+            "--target",
+            "target.yaml",
+            "--scenario",
+            "scenario.json",
+            "--out-dir",
+            "out",
+            "--out-dir",
+            "other",
+        ]
+        .into_iter()
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+        assert!(parse_simulate(&args)
+            .unwrap_err()
+            .contains("duplicate calibration simulation option --out-dir"));
     }
 }
