@@ -5,11 +5,13 @@
 
 from __future__ import annotations
 
+import copy
 import importlib.util
 import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 
 def load_benchmark_module():
@@ -102,40 +104,7 @@ class BenchmarkComparisonTests(unittest.TestCase):
         )
 
     def test_optimizer_plan_parser_and_expectations(self) -> None:
-        plan = {
-            "schema": "edgefit.optimization_plan.v1",
-            "status": "pass",
-            "model_sha256": "sha256:model",
-            "target_fingerprint": "fnv1a64:target",
-            "accelerator_id": "virtual-npu",
-            "confidence": "seed-simulated",
-            "baseline": {"blockers": 0, "latency_ns": 1000},
-            "proposed": {
-                "blockers": 0,
-                "latency_ns": 500,
-                "launch_ns": 100,
-                "compute_ns": 200,
-                "transfer_ns": 200,
-                "transfer_bytes": 128,
-                "spill_bytes": 64,
-                "peak_scratchpad_bytes": 96,
-            },
-            "assignments": [
-                {
-                    "device": "npu",
-                    "recipe_id": "recipe.hardswish.v1",
-                }
-            ],
-            "segments": [{"id": 0, "first_node": 0, "last_node": 0}],
-            "events": [
-                {"kind": "load"},
-                {"kind": "spill"},
-                {"kind": "reload"},
-                {"kind": "store"},
-            ],
-            "blockers": [],
-            "plan_hash": "fnv1a64:0123456789abcdef",
-        }
+        plan = self.valid_plan()
         case = {
             "id": "optimizer",
             "expectations": {
@@ -174,6 +143,156 @@ class BenchmarkComparisonTests(unittest.TestCase):
         self.assertEqual(observations["assignment_device_counts"], {"npu": 1})
         self.assertEqual(observations["event_kind_counts"]["spill"], 1)
         self.assertTrue(observations["latency_improved"])
+        self.assertEqual(observations["target_id"], "virtual-npu")
+
+    def test_optimizer_plan_parser_rejects_bool_as_int(self) -> None:
+        plan = self.valid_plan()
+        plan["events"][0]["bytes"] = True
+
+        self.assert_plan_rejected(plan)
+
+    def test_optimizer_plan_parser_rejects_bad_assignment(self) -> None:
+        plan = self.valid_plan()
+        plan["assignments"][0]["node_index"] = 1
+
+        self.assert_plan_rejected(plan)
+
+    def test_optimizer_plan_parser_rejects_bad_segment(self) -> None:
+        plan = self.valid_plan()
+        plan["segments"][0]["last_node"] = 1
+
+        self.assert_plan_rejected(plan)
+
+    def test_optimizer_plan_parser_rejects_bad_event(self) -> None:
+        plan = self.valid_plan()
+        plan["events"][0]["kind"] = "copy"
+
+        self.assert_plan_rejected(plan)
+
+    def test_optimizer_plan_parser_rejects_metric_mismatch(self) -> None:
+        for field in ("transfer_bytes", "transfer_ns", "spill_bytes", "latency_ns"):
+            with self.subTest(field=field):
+                plan = self.valid_plan()
+                plan["proposed"][field] += 1
+                self.assert_plan_rejected(plan)
+
+    def test_optimizer_plan_parser_rejects_assignment_latency_sum_mismatch(self) -> None:
+        for field in ("launch_ns", "compute_ns"):
+            with self.subTest(field=field):
+                plan = self.valid_plan()
+                plan["assignments"][0][field] += 1
+                self.assert_plan_rejected(plan)
+
+    def test_optimizer_plan_parser_requires_blocker_for_unsupported_assignment(self) -> None:
+        plan = self.unsupported_plan()
+        plan["blockers"] = ["latency_unknown"]
+        plan["proposed"]["blockers"] = 1
+
+        self.assert_plan_rejected(plan)
+
+    def test_optimizer_plan_parser_requires_latency_unknown_for_null_latency(self) -> None:
+        plan = self.unsupported_plan()
+        plan["blockers"] = ["node:0 unsupported"]
+        plan["proposed"]["blockers"] = 1
+
+        self.assert_plan_rejected(plan)
+
+    def test_optimizer_plan_parser_rejects_latency_unknown_with_known_latency(self) -> None:
+        plan = self.valid_plan()
+        plan["status"] = "fail"
+        plan["blockers"] = ["latency_unknown"]
+        plan["proposed"]["blockers"] = 1
+
+        self.assert_plan_rejected(plan)
+
+    def test_optimizer_plan_parser_rejects_event_on_non_npu_assignment(self) -> None:
+        plan = self.valid_plan()
+        assignment = plan["assignments"][0]
+        assignment["device"] = "cpu"
+        assignment["kernel_id"] = "cpu.hardswish.v1"
+        assignment["recipe_id"] = None
+        plan["segments"] = []
+
+        self.assert_plan_rejected(plan)
+
+    def test_optimizer_plan_parser_rejects_reload_before_spill(self) -> None:
+        plan = self.valid_plan()
+        plan["events"][1], plan["events"][2] = plan["events"][2], plan["events"][1]
+
+        self.assert_plan_rejected(plan)
+
+    def test_optimizer_plan_parser_rejects_reload_from_prior_segment(self) -> None:
+        plan = self.two_segment_plan()
+
+        self.assert_plan_rejected(plan)
+
+    def test_optimizer_plan_parser_accepts_unknown_extension_fields(self) -> None:
+        plan = self.valid_plan()
+        plan["extension"] = {"version": 2}
+        plan["baseline"]["extension"] = "baseline"
+        plan["proposed"]["extension"] = "proposed"
+        plan["assignments"][0]["extension"] = "assignment"
+        plan["segments"][0]["extension"] = "segment"
+        plan["events"][0]["extension"] = "event"
+
+        observations = self.parse_plan(plan)
+
+        self.assertEqual(observations["plan_status"], "pass")
+        self.assertEqual(observations["assignment_count"], 1)
+
+    def test_optimizer_plan_parser_rejects_pass_with_blockers(self) -> None:
+        plan = self.valid_plan()
+        plan["blockers"] = ["node:0 unsupported"]
+        plan["proposed"]["blockers"] = 1
+
+        self.assert_plan_rejected(plan)
+
+    def test_optimizer_plan_parser_rejects_malformed_hash(self) -> None:
+        plan = self.valid_plan()
+        plan["plan_hash"] = "fnv1a64:not-hex"
+
+        self.assert_plan_rejected(plan)
+
+    def test_run_tool_rejects_inconsistent_repetition_exit_codes(self) -> None:
+        processes = [self.finished_process(0), self.finished_process(1)]
+        with tempfile.TemporaryDirectory() as directory:
+            with mock.patch.object(self.benchmark, "run_process", side_effect=processes):
+                result = self.benchmark.run_tool(
+                    "edgefit",
+                    ["edgefit", "optimize"],
+                    Path(directory),
+                    1,
+                    {0, 1},
+                    lambda _output, _artifact: {"parsed": True},
+                    repetitions=2,
+                )
+
+        self.assertEqual(result["status"], "runner_error")
+        self.assertIn("inconsistent exit codes", result["detail"])
+        self.assertEqual(result["observations"], {})
+
+    def test_run_tool_rejects_plan_status_exit_code_mismatch(self) -> None:
+        mismatches = ((0, "fail"), (1, "pass"))
+        for exit_code, plan_status in mismatches:
+            with self.subTest(exit_code=exit_code, plan_status=plan_status):
+                with tempfile.TemporaryDirectory() as directory:
+                    with mock.patch.object(
+                        self.benchmark,
+                        "run_process",
+                        return_value=self.finished_process(exit_code),
+                    ):
+                        result = self.benchmark.run_tool(
+                            "edgefit",
+                            ["edgefit", "optimize"],
+                            Path(directory),
+                            1,
+                            {0, 1},
+                            lambda _output, _artifact: {"plan_status": plan_status},
+                        )
+
+                self.assertEqual(result["status"], "runner_error")
+                self.assertIn("exit code", result["detail"])
+                self.assertEqual(result["observations"], {})
 
     def test_performance_expectations_fail_closed_on_missing_rss(self) -> None:
         case = {
@@ -226,6 +345,146 @@ class BenchmarkComparisonTests(unittest.TestCase):
         )
         self.assertEqual(comparison["metrics"]["planned_activation_arena_bytes"]["delta"], -200)
         self.assertEqual(comparison["candidate"]["peak_op_type"], "QLinearConv")
+
+    def assert_plan_rejected(self, plan: dict) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "plan.json"
+            path.write_text(json.dumps(plan), encoding="utf-8")
+            with self.assertRaises(self.benchmark.InputError):
+                self.benchmark.parse_edgefit_plan("", path)
+
+    def parse_plan(self, plan: dict) -> dict:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "plan.json"
+            path.write_text(json.dumps(plan), encoding="utf-8")
+            return self.benchmark.parse_edgefit_plan("", path)
+
+    @classmethod
+    def unsupported_plan(cls) -> dict:
+        plan = cls.valid_plan()
+        assignment = plan["assignments"][0]
+        assignment["device"] = "unsupported"
+        assignment["kernel_id"] = None
+        assignment["recipe_id"] = None
+        assignment["launch_ns"] = None
+        assignment["compute_ns"] = None
+        plan["segments"] = []
+        plan["events"] = []
+        plan["status"] = "fail"
+        plan["blockers"] = ["node:0 unsupported", "latency_unknown"]
+        plan["proposed"].update(
+            {
+                "blockers": 2,
+                "latency_ns": None,
+                "launch_ns": None,
+                "compute_ns": None,
+                "transfer_ns": 0,
+                "transfer_bytes": 0,
+                "spill_bytes": 0,
+                "peak_scratchpad_bytes": 0,
+            }
+        )
+        return plan
+
+    @classmethod
+    def two_segment_plan(cls) -> dict:
+        plan = cls.valid_plan()
+        first = plan["assignments"][0]
+        cpu = {
+            "node_index": 1,
+            "op_type": "Relu",
+            "device": "cpu",
+            "kernel_id": "cpu.relu.v1",
+            "recipe_id": None,
+            "launch_ns": 10,
+            "compute_ns": 20,
+        }
+        last = copy.deepcopy(first)
+        last["node_index"] = 2
+        last["op_type"] = "Relu"
+        last["kernel_id"] = "npu.relu.v1"
+        last["recipe_id"] = None
+        plan["assignments"] = [first, cpu, last]
+        plan["segments"] = [
+            {"id": 0, "first_node": 0, "last_node": 0},
+            {"id": 1, "first_node": 2, "last_node": 2},
+        ]
+        plan["events"] = [
+            {"kind": "spill", "tensor": "x", "bytes": 64, "at_node": 0, "latency_ns": 30},
+            {"kind": "reload", "tensor": "x", "bytes": 64, "at_node": 2, "latency_ns": 40},
+        ]
+        launch = sum(item["launch_ns"] for item in plan["assignments"])
+        compute = sum(item["compute_ns"] for item in plan["assignments"])
+        transfer_ns = sum(item["latency_ns"] for item in plan["events"])
+        plan["proposed"].update(
+            {
+                "latency_ns": launch + compute + transfer_ns,
+                "launch_ns": launch,
+                "compute_ns": compute,
+                "transfer_ns": transfer_ns,
+                "transfer_bytes": 128,
+                "spill_bytes": 64,
+            }
+        )
+        return plan
+
+    @staticmethod
+    def valid_plan() -> dict:
+        events = [
+            {"kind": "load", "tensor": "x", "bytes": 32, "at_node": 0, "latency_ns": 20},
+            {"kind": "spill", "tensor": "x", "bytes": 64, "at_node": 0, "latency_ns": 30},
+            {"kind": "reload", "tensor": "x", "bytes": 64, "at_node": 0, "latency_ns": 40},
+            {"kind": "store", "tensor": "y", "bytes": 32, "at_node": 0, "latency_ns": 110},
+        ]
+        return {
+            "schema": "edgefit.optimization_plan.v1",
+            "status": "pass",
+            "model_sha256": "sha256:model",
+            "target_id": "virtual-npu",
+            "target_fingerprint": "fnv1a64:target",
+            "accelerator_id": "virtual-npu",
+            "confidence": "seed-simulated",
+            "baseline": {"blockers": 0, "latency_ns": 1000},
+            "proposed": {
+                "blockers": 0,
+                "latency_ns": 500,
+                "launch_ns": 100,
+                "compute_ns": 200,
+                "transfer_ns": sum(item["latency_ns"] for item in events),
+                "transfer_bytes": sum(item["bytes"] for item in events),
+                "spill_bytes": sum(
+                    item["bytes"] for item in events if item["kind"] == "spill"
+                ),
+                "peak_scratchpad_bytes": 96,
+            },
+            "assignments": [
+                {
+                    "node_index": 0,
+                    "op_type": "HardSwish",
+                    "device": "npu",
+                    "kernel_id": "npu.hardswish.v1",
+                    "recipe_id": "recipe.hardswish.v1",
+                    "launch_ns": 100,
+                    "compute_ns": 200,
+                }
+            ],
+            "segments": [{"id": 0, "first_node": 0, "last_node": 0}],
+            "events": events,
+            "blockers": [],
+            "plan_hash": "fnv1a64:0123456789abcdef",
+            "future_extension": {"accepted": True},
+        }
+
+    @staticmethod
+    def finished_process(exit_code: int) -> dict:
+        return {
+            "state": "finished",
+            "exit_code": exit_code,
+            "duration_ms": 1,
+            "stdout": "",
+            "stderr": "",
+            "peak_rss_bytes": None,
+        }
 
     @staticmethod
     def case(case_id: str, file_bytes: int, arena_bytes: int, op: str, duration: int):

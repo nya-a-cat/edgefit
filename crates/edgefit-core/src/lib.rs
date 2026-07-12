@@ -109,6 +109,24 @@ pub fn optimize_adapter_generated_model(
     optimize(&load_cli_adapter_output(model_path)?, &load_profile(target_path)?)
 }
 
+/// 为内存中的规范化模型与 target profile 生成 typed canonical 优化计划。
+pub fn optimize_normalized_text(
+    model_text: &str,
+    target_text: &str,
+    target_source: &str,
+) -> EdgeFitResult<OptimizationPlan> {
+    optimize_text(model_text, target_text, target_source, false)
+}
+
+/// 为受控 ONNX 适配器生成的内存模型与 target profile 生成 typed canonical 优化计划。
+pub fn optimize_adapter_generated_text(
+    model_text: &str,
+    target_text: &str,
+    target_source: &str,
+) -> EdgeFitResult<OptimizationPlan> {
+    optimize_text(model_text, target_text, target_source, true)
+}
+
 /// 为 Python 框架中的内存模型生成 canonical 优化计划。
 pub fn render_optimization_text(
     model_text: &str,
@@ -117,13 +135,25 @@ pub fn render_optimization_text(
     format: &str,
     adapter_generated: bool,
 ) -> EdgeFitResult<String> {
+    if !matches!(format, "json" | "markdown") {
+        return Err("optimization format must be json or markdown".to_string());
+    }
+    let plan = optimize_text(model_text, target_text, target_source, adapter_generated)?;
+    Ok(render_plan(&plan, format))
+}
+
+fn optimize_text(
+    model_text: &str,
+    target_text: &str,
+    target_source: &str,
+    adapter_generated: bool,
+) -> EdgeFitResult<OptimizationPlan> {
     let model = if adapter_generated {
         parse_cli_adapter_output(model_text)?
     } else {
         parse_normalized_model(model_text)?
     };
-    let plan = optimize(&model, &parse_target_text(target_text, target_source)?)?;
-    Ok(render_plan(&plan, format))
+    optimize(&model, &parse_target_text(target_text, target_source)?)
 }
 
 fn check_loaded_model(
@@ -136,7 +166,9 @@ fn check_loaded_model(
 }
 
 fn parse_target_text(text: &str, source: &str) -> EdgeFitResult<TargetProfile> {
-    parse_profile(text, PathBuf::from(source))
+    let profile = parse_profile(text, PathBuf::from(source))?;
+    profile.validate()?;
+    Ok(profile)
 }
 
 fn check_loaded_model_with_profile(
