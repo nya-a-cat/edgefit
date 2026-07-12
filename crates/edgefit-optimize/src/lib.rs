@@ -59,116 +59,276 @@ pub struct OptimizationPlan {
     pub plan_hash: String,
 }
 
+#[derive(Clone, Copy)]
+struct Candidate<'a> {
+    kernel_id: Option<&'a str>,
+    launch_ns: u64,
+    compute_ns: u64,
+    recipe_id: Option<&'a str>,
+}
+
 pub fn optimize(model: &NormalizedModel, profile: &TargetProfile) -> EdgeFitResult<OptimizationPlan> {
     profile.validate()?;
-    let accelerator = profile
+    profile
         .accelerator
         .as_ref()
         .ok_or("target profile does not declare an accelerator")?;
     let producers = producers(model);
     let graph_outputs = model.outputs.iter().cloned().collect::<BTreeSet<_>>();
-    let mut assignments: Vec<NodeAssignment> = Vec::with_capacity(model.nodes.len());
+    let mut assignments = Vec::with_capacity(model.nodes.len());
+    let mut cpu_assignments = Vec::with_capacity(model.nodes.len());
     let mut baseline_blockers = 0_u64;
     let mut baseline_latency = Some(0_u64);
 
     for (node_index, node) in model.nodes.iter().enumerate() {
-        let rule = profile.op_rule(&node.domain, &node.op_type);
-        let cpu = rule
-            .filter(|rule| contract_compatible(node, rule, model))
-            .and_then(|rule| rule.cpu_cost.as_ref())
-            .and_then(|cost| evaluate_cost(cost, node, model));
-        baseline_latency = add_optional_latency(baseline_latency, cpu.map(|item| item.0 + item.1));
+        let rule = profile
+            .op_rule(&node.domain, &node.op_type)
+            .filter(|rule| contract_compatible(node, rule, model, profile));
+        let cpu = match rule.and_then(|rule| rule.cpu_cost.as_ref()) {
+            Some(cost) => evaluate_cost(cost, node, model, profile)?.map(|(launch_ns, compute_ns)| {
+                Candidate {
+                    kernel_id: Some(cost.id.as_str()),
+                    launch_ns,
+                    compute_ns,
+                    recipe_id: None,
+                }
+            }),
+            None => None,
+        };
+        let cpu_total = match cpu {
+            Some(candidate) => Some(checked_add(
+                candidate.launch_ns,
+                candidate.compute_ns,
+                "CPU node latency",
+            )?),
+            None => None,
+        };
+        baseline_latency = add_optional_latency(baseline_latency, cpu_total, "CPU baseline latency")?;
         if cpu.is_none() {
-            baseline_blockers += 1;
+            baseline_blockers = checked_add(baseline_blockers, 1, "CPU baseline blocker count")?;
         }
+        cpu_assignments.push(assignment_for_candidate(node_index, node, "cpu", cpu));
 
-        let direct = rule
-            .filter(|rule| contract_compatible(node, rule, model))
-            .and_then(|rule| rule.npu_cost.as_ref())
-            .and_then(|cost| evaluate_cost(cost, node, model).map(|latency| (cost, latency, None)));
-        let recipe = profile
+        let direct = match rule.and_then(|rule| rule.npu_cost.as_ref()) {
+            Some(cost) => evaluate_cost(cost, node, model, profile)?.map(|(launch_ns, compute_ns)| {
+                Candidate {
+                    kernel_id: Some(cost.id.as_str()),
+                    launch_ns,
+                    compute_ns,
+                    recipe_id: None,
+                }
+            }),
+            None => None,
+        };
+        let recipe = match profile
             .replacement_recipes
             .get(&(node.domain.clone(), node.op_type.clone()))
-            .and_then(|recipe| recipe_candidate(recipe, node, model, profile));
-        let npu = direct.or(recipe);
+        {
+            Some(recipe) => recipe_candidate(recipe, node, model, profile)?,
+            None => None,
+        };
+        let npu = best_candidate(direct, recipe)?;
 
-        let choose_npu = match (cpu, &npu) {
+        let choose_npu = match (cpu, npu) {
             (None, Some(_)) => true,
-            (Some((cpu_launch, cpu_compute)), Some((_, (npu_launch, npu_compute), _))) => {
-                let boundary_bytes = node
-                    .inputs
-                    .iter()
-                    .filter(|name| !name.is_empty())
-                    .filter(|name| {
-                        producers
-                            .get(*name)
-                            .and_then(|producer| assignments.get(*producer))
-                            .is_none_or(|assignment| assignment.device != "npu")
-                    })
-                    .chain(node.outputs.iter().filter(|name| graph_outputs.contains(*name)))
-                    .filter_map(|name| tensor_bytes(model, name))
-                    .map(|bytes| align_up(bytes, accelerator.dma_burst_bytes))
-                    .sum::<u64>();
-                let boundary_ns = dma_ns(
-                    boundary_bytes,
-                    accelerator.dma_setup_ns,
-                    accelerator.dma_read_bytes_per_second,
-                );
-                npu_launch
-                    .saturating_add(*npu_compute)
-                    .saturating_add(boundary_ns)
-                    < cpu_launch.saturating_add(cpu_compute)
+            (Some(cpu), Some(npu)) => {
+                let boundary_ns = prospective_boundary_latency(
+                    node,
+                    model,
+                    profile,
+                    &producers,
+                    &assignments,
+                    &graph_outputs,
+                )?;
+                if let Some(boundary_ns) = boundary_ns {
+                    let npu_total = checked_add(
+                        checked_add(npu.launch_ns, npu.compute_ns, "NPU node latency")?,
+                        boundary_ns,
+                        "NPU node latency with boundary transfer",
+                    )?;
+                    let cpu_total = checked_add(cpu.launch_ns, cpu.compute_ns, "CPU node latency")?;
+                    npu_total < cpu_total
+                } else {
+                    false
+                }
             }
             _ => false,
         };
 
         if choose_npu {
-            let (cost, (launch, compute), recipe_id) = npu.expect("checked NPU candidate");
-            assignments.push(NodeAssignment {
-                node_index,
-                op_type: node.op_type.clone(),
-                device: "npu".to_string(),
-                kernel_id: Some(cost.id.clone()),
-                recipe_id,
-                launch_ns: Some(launch),
-                compute_ns: Some(compute),
-            });
-        } else if let Some(rule) = rule {
-            let latency = rule.cpu_cost.as_ref().and_then(|cost| evaluate_cost(cost, node, model));
-            assignments.push(NodeAssignment {
-                node_index,
-                op_type: node.op_type.clone(),
-                device: if latency.is_some() { "cpu" } else { "unsupported" }.to_string(),
-                kernel_id: rule.cpu_cost.as_ref().map(|cost| cost.id.clone()),
-                recipe_id: None,
-                launch_ns: latency.map(|item| item.0),
-                compute_ns: latency.map(|item| item.1),
-            });
+            assignments.push(assignment_for_candidate(node_index, node, "npu", npu));
         } else {
-            assignments.push(NodeAssignment {
-                node_index,
-                op_type: node.op_type.clone(),
-                device: "unsupported".to_string(),
-                kernel_id: None,
-                recipe_id: None,
-                launch_ns: None,
-                compute_ns: None,
-            });
+            assignments.push(assignment_for_candidate(node_index, node, "cpu", cpu));
         }
     }
 
+    let cpu_plan = build_plan(
+        model,
+        profile,
+        baseline_blockers,
+        baseline_latency,
+        cpu_assignments,
+    )?;
+    let proposed_plan = build_plan(
+        model,
+        profile,
+        baseline_blockers,
+        baseline_latency,
+        assignments,
+    )?;
+    let plan = if cpu_plan.status == "pass" && !plan_is_better(&proposed_plan, &cpu_plan) {
+        cpu_plan
+    } else {
+        proposed_plan
+    };
+    validate_plan_invariants(&plan, model, profile)?;
+    Ok(plan)
+}
+
+fn prospective_boundary_latency(
+    node: &NodeInfo,
+    model: &NormalizedModel,
+    profile: &TargetProfile,
+    producers: &BTreeMap<String, usize>,
+    assignments: &[NodeAssignment],
+    graph_outputs: &BTreeSet<String>,
+) -> EdgeFitResult<Option<u64>> {
+    let accelerator = profile.accelerator.as_ref().ok_or("missing accelerator")?;
+    let mut total = 0_u64;
+    for name in node.inputs.iter().filter(|name| !name.is_empty()).filter(|name| {
+        producers
+            .get(*name)
+            .and_then(|producer| assignments.get(*producer))
+            .is_none_or(|assignment| assignment.device != "npu")
+    }) {
+        let Some(bytes) = tensor_bytes(model, profile, name)? else {
+            return Ok(None);
+        };
+        let bytes = align_up(bytes, accelerator.dma_burst_bytes)?;
+        if bytes != 0 {
+            total = checked_add(
+                total,
+                dma_ns(
+                    bytes,
+                    accelerator.dma_setup_ns,
+                    accelerator.dma_read_bytes_per_second,
+                )?,
+                "NPU boundary load latency",
+            )?;
+        }
+    }
+    for name in node.outputs.iter().filter(|name| graph_outputs.contains(*name)) {
+        let Some(bytes) = tensor_bytes(model, profile, name)? else {
+            return Ok(None);
+        };
+        let bytes = align_up(bytes, accelerator.dma_burst_bytes)?;
+        if bytes != 0 {
+            total = checked_add(
+                total,
+                dma_ns(
+                    bytes,
+                    accelerator.dma_setup_ns,
+                    accelerator.dma_write_bytes_per_second,
+                )?,
+                "NPU boundary store latency",
+            )?;
+        }
+    }
+    Ok(Some(total))
+}
+
+fn best_candidate<'a>(
+    direct: Option<Candidate<'a>>,
+    recipe: Option<Candidate<'a>>,
+) -> EdgeFitResult<Option<Candidate<'a>>> {
+    match (direct, recipe) {
+        (Some(direct), Some(recipe)) => {
+            let direct_total = checked_add(
+                direct.launch_ns,
+                direct.compute_ns,
+                "direct NPU candidate latency",
+            )?;
+            let recipe_total = checked_add(
+                recipe.launch_ns,
+                recipe.compute_ns,
+                "replacement recipe candidate latency",
+            )?;
+            if recipe_total < direct_total {
+                Ok(Some(recipe))
+            } else {
+                Ok(Some(direct))
+            }
+        }
+        (candidate @ Some(_), None) | (None, candidate @ Some(_)) => Ok(candidate),
+        (None, None) => Ok(None),
+    }
+}
+
+fn plan_is_better(candidate: &OptimizationPlan, fallback: &OptimizationPlan) -> bool {
+    if candidate.proposed_blockers != fallback.proposed_blockers {
+        return candidate.proposed_blockers < fallback.proposed_blockers;
+    }
+    match (candidate.proposed_latency_ns, fallback.proposed_latency_ns) {
+        (Some(candidate), Some(fallback)) => candidate < fallback,
+        (Some(_), None) => true,
+        _ => false,
+    }
+}
+
+fn assignment_for_candidate(
+    node_index: usize,
+    node: &NodeInfo,
+    device: &str,
+    candidate: Option<Candidate<'_>>,
+) -> NodeAssignment {
+    match candidate {
+        Some(candidate) => NodeAssignment {
+            node_index,
+            op_type: node.op_type.clone(),
+            device: device.to_string(),
+            kernel_id: candidate.kernel_id.map(str::to_string),
+            recipe_id: candidate.recipe_id.map(str::to_string),
+            launch_ns: Some(candidate.launch_ns),
+            compute_ns: Some(candidate.compute_ns),
+        },
+        None => NodeAssignment {
+            node_index,
+            op_type: node.op_type.clone(),
+            device: "unsupported".to_string(),
+            kernel_id: None,
+            recipe_id: None,
+            launch_ns: None,
+            compute_ns: None,
+        },
+    }
+}
+
+fn build_plan(
+    model: &NormalizedModel,
+    profile: &TargetProfile,
+    baseline_blockers: u64,
+    baseline_latency_ns: Option<u64>,
+    assignments: Vec<NodeAssignment>,
+) -> EdgeFitResult<OptimizationPlan> {
+    let accelerator = profile.accelerator.as_ref().ok_or("missing accelerator")?;
     let segments = collect_segments(&assignments);
-    let simulation = simulate_npu(model, profile, &segments)?;
-    let proposed_blockers = assignments
-        .iter()
-        .filter(|assignment| assignment.device == "unsupported")
-        .count() as u64
-        + simulation.blockers.len() as u64;
-    let launch_latency_ns = sum_optional(assignments.iter().map(|item| item.launch_ns));
-    let compute_latency_ns = sum_optional(assignments.iter().map(|item| item.compute_ns));
-    let proposed_latency_ns = launch_latency_ns
-        .zip(compute_latency_ns)
-        .map(|(launch, compute)| launch.saturating_add(compute).saturating_add(simulation.transfer_ns));
+    let simulation = simulate_npu(model, profile, &assignments, &segments)?;
+    let launch_latency_ns = sum_optional(
+        assignments.iter().map(|assignment| assignment.launch_ns),
+        "proposed launch latency",
+    )?;
+    let compute_latency_ns = sum_optional(
+        assignments.iter().map(|assignment| assignment.compute_ns),
+        "proposed compute latency",
+    )?;
+    let proposed_latency_ns = match launch_latency_ns.zip(compute_latency_ns) {
+        Some((launch, compute)) => Some(checked_add(
+            checked_add(launch, compute, "proposed kernel latency")?,
+            simulation.transfer_ns,
+            "proposed total latency",
+        )?),
+        None => None,
+    };
     let mut blockers = assignments
         .iter()
         .filter(|assignment| assignment.device == "unsupported")
@@ -178,6 +338,8 @@ pub fn optimize(model: &NormalizedModel, profile: &TargetProfile) -> EdgeFitResu
     if proposed_latency_ns.is_none() {
         blockers.push("latency_unknown".to_string());
     }
+    let proposed_blockers = u64::try_from(blockers.len())
+        .map_err(|_| "arithmetic overflow converting proposed blocker count".to_string())?;
     let status = if blockers.is_empty() { "pass" } else { "fail" }.to_string();
     let plan_hash = plan_fingerprint(
         &model.sha256,
@@ -197,7 +359,7 @@ pub fn optimize(model: &NormalizedModel, profile: &TargetProfile) -> EdgeFitResu
         confidence: accelerator.confidence.clone(),
         baseline_blockers,
         proposed_blockers,
-        baseline_latency_ns: baseline_latency,
+        baseline_latency_ns,
         proposed_latency_ns,
         launch_latency_ns,
         compute_latency_ns,
@@ -225,6 +387,7 @@ struct Simulation {
 fn simulate_npu(
     model: &NormalizedModel,
     profile: &TargetProfile,
+    assignments: &[NodeAssignment],
     segments: &[Segment],
 ) -> EdgeFitResult<Simulation> {
     let accelerator = profile.accelerator.as_ref().ok_or("missing accelerator")?;
@@ -243,17 +406,22 @@ fn simulate_npu(
         let mut used = 0_u64;
         for node_index in segment.first_node..=segment.last_node {
             let node = &model.nodes[node_index];
-            let protected = node.inputs.iter().cloned().collect::<BTreeSet<_>>();
+            let mut protected = node
+                .inputs
+                .iter()
+                .filter(|name| !name.is_empty())
+                .cloned()
+                .collect::<BTreeSet<_>>();
             for input in node.inputs.iter().filter(|name| !name.is_empty()) {
                 if resident.contains_key(input) {
                     continue;
                 }
-                let Some(bytes) = tensor_bytes(model, input) else {
+                let Some(bytes) = tensor_bytes(model, profile, input)? else {
                     blockers.push(format!("node:{node_index} tensor:{input} size_unknown"));
                     continue;
                 };
-                let bytes = align_up(bytes, accelerator.tensor_alignment_bytes);
-                spill_until_fit(
+                let bytes = align_up(bytes, accelerator.tensor_alignment_bytes)?;
+                if spill_until_fit(
                     node_index,
                     bytes,
                     &protected,
@@ -266,11 +434,14 @@ fn simulate_npu(
                     &mut transfer_ns,
                     &mut transfer_bytes,
                     &mut spill_bytes,
-                    &mut blockers,
-                );
-                if used.saturating_add(bytes) <= accelerator.scratchpad_bytes {
-                    resident.insert(input.clone(), bytes);
-                    used = used.saturating_add(bytes);
+                )? {
+                    if resident.insert(input.clone(), bytes).is_some() {
+                        return Err(format!(
+                            "scratchpad accounting encountered duplicate resident tensor {input}"
+                        ));
+                    }
+                    used = checked_add(used, bytes, "scratchpad input allocation")?;
+                    peak_bytes = peak_bytes.max(used);
                     record_transfer(
                         if spilled.remove(input) { "reload" } else { "load" },
                         input,
@@ -281,18 +452,53 @@ fn simulate_npu(
                         &mut events,
                         &mut transfer_ns,
                         &mut transfer_bytes,
-                    );
+                    )?;
                 } else {
-                    blockers.push(format!("node:{node_index} tensor:{input} scratchpad_unavailable"));
+                    blockers.push(scratchpad_blocker(
+                        node_index,
+                        Some(input),
+                        accelerator.spill_allowed,
+                    ));
                 }
             }
+
+            let workspace_bytes = assignment_workspace_bytes(node, &assignments[node_index], profile)?;
+            let workspace_bytes = align_up(workspace_bytes, accelerator.tensor_alignment_bytes)?;
+            let workspace_allocated = if workspace_bytes == 0 {
+                true
+            } else if spill_until_fit(
+                node_index,
+                workspace_bytes,
+                &protected,
+                &consumers,
+                &mut resident,
+                &mut spilled,
+                &mut used,
+                accelerator,
+                &mut events,
+                &mut transfer_ns,
+                &mut transfer_bytes,
+                &mut spill_bytes,
+            )? {
+                used = checked_add(used, workspace_bytes, "NPU workspace allocation")?;
+                peak_bytes = peak_bytes.max(used);
+                true
+            } else {
+                blockers.push(scratchpad_blocker(
+                    node_index,
+                    None,
+                    accelerator.spill_allowed,
+                ));
+                false
+            };
+
             for output in node.outputs.iter().filter(|name| !name.is_empty()) {
-                let Some(bytes) = tensor_bytes(model, output) else {
+                let Some(bytes) = tensor_bytes(model, profile, output)? else {
                     blockers.push(format!("node:{node_index} tensor:{output} size_unknown"));
                     continue;
                 };
-                let bytes = align_up(bytes, accelerator.tensor_alignment_bytes);
-                spill_until_fit(
+                let bytes = align_up(bytes, accelerator.tensor_alignment_bytes)?;
+                if spill_until_fit(
                     node_index,
                     bytes,
                     &protected,
@@ -305,27 +511,50 @@ fn simulate_npu(
                     &mut transfer_ns,
                     &mut transfer_bytes,
                     &mut spill_bytes,
-                    &mut blockers,
-                );
-                if used.saturating_add(bytes) <= accelerator.scratchpad_bytes {
-                    resident.insert(output.clone(), bytes);
-                    used = used.saturating_add(bytes);
+                )? {
+                    if resident.insert(output.clone(), bytes).is_some() {
+                        return Err(format!(
+                            "scratchpad accounting encountered duplicate resident tensor {output}"
+                        ));
+                    }
+                    used = checked_add(used, bytes, "scratchpad output allocation")?;
+                    peak_bytes = peak_bytes.max(used);
+                    protected.insert(output.clone());
+                } else {
+                    blockers.push(scratchpad_blocker(
+                        node_index,
+                        Some(output),
+                        accelerator.spill_allowed,
+                    ));
                 }
             }
-            peak_bytes = peak_bytes.max(used);
-            resident.retain(|tensor, bytes| {
-                let keep = consumers
-                    .get(tensor)
-                    .is_some_and(|uses| uses.iter().any(|index| *index > node_index && *index <= segment.last_node))
-                    || graph_outputs.contains(tensor)
-                    || consumers
-                        .get(tensor)
-                        .is_some_and(|uses| uses.iter().any(|index| *index > segment.last_node));
-                if !keep {
-                    used = used.saturating_sub(*bytes);
-                }
-                keep
-            });
+            if workspace_allocated {
+                used = checked_sub(used, workspace_bytes, "NPU workspace release")?;
+            }
+
+            let dead = resident
+                .iter()
+                .filter(|(tensor, _)| {
+                    !consumers
+                        .get(*tensor)
+                        .is_some_and(|uses| {
+                            uses.iter().any(|index| {
+                                *index > node_index && *index <= segment.last_node
+                            })
+                        })
+                        && !graph_outputs.contains(*tensor)
+                        && !consumers
+                            .get(*tensor)
+                            .is_some_and(|uses| uses.iter().any(|index| *index > segment.last_node))
+                })
+                .map(|(tensor, bytes)| (tensor.clone(), *bytes))
+                .collect::<Vec<_>>();
+            let mut released = 0_u64;
+            for (tensor, bytes) in dead {
+                resident.remove(&tensor);
+                released = checked_add(released, bytes, "scratchpad dead tensor byte sum")?;
+            }
+            used = checked_sub(used, released, "scratchpad dead tensor release")?;
         }
         let last_node = segment.last_node;
         for (tensor, bytes) in resident {
@@ -339,11 +568,50 @@ fn simulate_npu(
                 &mut events,
                 &mut transfer_ns,
                 &mut transfer_bytes,
-            );
+            )?;
         }
     }
 
     Ok(Simulation { events, transfer_ns, transfer_bytes, spill_bytes, peak_bytes, blockers })
+}
+
+fn assignment_workspace_bytes(
+    node: &NodeInfo,
+    assignment: &NodeAssignment,
+    profile: &TargetProfile,
+) -> EdgeFitResult<u64> {
+    if assignment.device != "npu" {
+        return Ok(0);
+    }
+    let Some(recipe_id) = assignment.recipe_id.as_deref() else {
+        return Ok(profile
+            .op_rule(&node.domain, &node.op_type)
+            .map_or(0, |rule| rule.workspace_bytes));
+    };
+    let recipe = profile
+        .replacement_recipes
+        .get(&(node.domain.clone(), node.op_type.clone()))
+        .filter(|recipe| recipe.id == recipe_id)
+        .ok_or_else(|| format!("missing replacement recipe {recipe_id} for workspace accounting"))?;
+    let mut workspace_bytes = 0_u64;
+    for replacement in &recipe.replacement_ops {
+        let rule = profile
+            .op_rule(&node.domain, replacement)
+            .ok_or_else(|| format!("missing replacement operator {replacement} for workspace accounting"))?;
+        workspace_bytes = workspace_bytes.max(rule.workspace_bytes);
+    }
+    Ok(workspace_bytes)
+}
+
+fn scratchpad_blocker(node_index: usize, tensor: Option<&str>, spill_allowed: bool) -> String {
+    let subject = tensor
+        .map(|tensor| format!("tensor:{tensor}"))
+        .unwrap_or_else(|| "workspace".to_string());
+    if spill_allowed {
+        format!("node:{node_index} {subject} scratchpad_unavailable")
+    } else {
+        format!("node:{node_index} {subject} scratchpad_unavailable spill_disabled")
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -360,16 +628,25 @@ fn spill_until_fit(
     transfer_ns: &mut u64,
     transfer_bytes: &mut u64,
     spill_bytes: &mut u64,
-    blockers: &mut Vec<String>,
-) {
-    while used.saturating_add(required) > accelerator.scratchpad_bytes {
-        if !accelerator.spill_allowed {
-            blockers.push(format!("node:{node_index} scratchpad_exceeded"));
-            return;
-        }
+) -> EdgeFitResult<bool> {
+    if checked_add(*used, required, "scratchpad capacity check")?
+        <= accelerator.scratchpad_bytes
+    {
+        return Ok(true);
+    }
+    if !accelerator.spill_allowed {
+        return Ok(false);
+    }
+
+    let mut planned_used = *used;
+    let mut victims = Vec::<(String, u64)>::new();
+    let mut selected = BTreeSet::<String>::new();
+    while checked_add(planned_used, required, "scratchpad capacity check")?
+        > accelerator.scratchpad_bytes
+    {
         let victim = resident
             .iter()
-            .filter(|(tensor, _)| !protected.contains(*tensor))
+            .filter(|(tensor, _)| !protected.contains(*tensor) && !selected.contains(*tensor))
             .max_by_key(|(tensor, bytes)| {
                 let next = consumers
                     .get(*tensor)
@@ -380,13 +657,19 @@ fn spill_until_fit(
             })
             .map(|(tensor, bytes)| (tensor.clone(), *bytes));
         let Some((tensor, bytes)) = victim else {
-            blockers.push(format!("node:{node_index} no_spill_victim"));
-            return;
+            return Ok(false);
         };
+        planned_used = checked_sub(planned_used, bytes, "planned scratchpad spill release")?;
+        selected.insert(tensor.clone());
+        victims.push((tensor, bytes));
+    }
+
+    for (tensor, bytes) in victims {
         resident.remove(&tensor);
         spilled.insert(tensor.clone());
-        *used = used.saturating_sub(bytes);
-        *spill_bytes = spill_bytes.saturating_add(bytes);
+        *used = checked_sub(*used, bytes, "scratchpad spill release")?;
+        let transferred_bytes = align_up(bytes, accelerator.dma_burst_bytes)?;
+        *spill_bytes = checked_add(*spill_bytes, transferred_bytes, "spill byte total")?;
         record_transfer(
             "spill",
             &tensor,
@@ -397,8 +680,9 @@ fn spill_until_fit(
             events,
             transfer_ns,
             transfer_bytes,
-        );
+        )?;
     }
+    Ok(true)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -412,11 +696,14 @@ fn record_transfer(
     events: &mut Vec<TransferEvent>,
     transfer_ns: &mut u64,
     transfer_bytes: &mut u64,
-) {
-    let bytes = align_up(bytes, accelerator.dma_burst_bytes);
-    let latency_ns = dma_ns(bytes, accelerator.dma_setup_ns, bandwidth);
-    *transfer_ns = transfer_ns.saturating_add(latency_ns);
-    *transfer_bytes = transfer_bytes.saturating_add(bytes);
+) -> EdgeFitResult<()> {
+    let bytes = align_up(bytes, accelerator.dma_burst_bytes)?;
+    if bytes == 0 {
+        return Ok(());
+    }
+    let latency_ns = dma_ns(bytes, accelerator.dma_setup_ns, bandwidth)?;
+    *transfer_ns = checked_add(*transfer_ns, latency_ns, "transfer latency total")?;
+    *transfer_bytes = checked_add(*transfer_bytes, bytes, "transfer byte total")?;
     events.push(TransferEvent {
         kind: kind.to_string(),
         tensor: tensor.to_string(),
@@ -424,6 +711,7 @@ fn record_transfer(
         at_node,
         latency_ns,
     });
+    Ok(())
 }
 
 fn recipe_candidate<'a>(
@@ -431,112 +719,491 @@ fn recipe_candidate<'a>(
     node: &NodeInfo,
     model: &NormalizedModel,
     profile: &'a TargetProfile,
-) -> Option<(&'a KernelCost, (u64, u64), Option<String>)> {
-    if !recipe.trusted {
-        return None;
+) -> EdgeFitResult<Option<Candidate<'a>>> {
+    if !recipe.trusted
+        || profile
+            .op_rule(&node.domain, &node.op_type)
+            .is_some_and(|rule| !contract_compatible(node, rule, model, profile))
+    {
+        return Ok(None);
     }
-    let mut first = None;
-    let mut launch = 0_u64;
-    let mut compute = 0_u64;
+    if recipe.id.trim().is_empty()
+        || recipe.version.trim().is_empty()
+        || recipe.source.trim().is_empty()
+        || recipe.replacement_ops.is_empty()
+    {
+        return Ok(None);
+    }
+    let mut launch_ns = 0_u64;
+    let mut compute_ns = 0_u64;
     for replacement in &recipe.replacement_ops {
-        let cost = profile.op_rule(&node.domain, replacement)?.npu_cost.as_ref()?;
-        let latency = evaluate_cost(cost, node, model)?;
-        first.get_or_insert(cost);
-        launch = launch.saturating_add(latency.0);
-        compute = compute.saturating_add(latency.1);
+        let Some(rule) = profile.op_rule(&node.domain, replacement) else {
+            return Ok(None);
+        };
+        if !contract_compatible(node, rule, model, profile) {
+            return Ok(None);
+        }
+        let Some(cost) = rule.npu_cost.as_ref() else {
+            return Ok(None);
+        };
+        let Some((launch, compute)) = evaluate_cost(cost, node, model, profile)? else {
+            return Ok(None);
+        };
+        launch_ns = checked_add(launch_ns, launch, "replacement recipe launch latency")?;
+        compute_ns = checked_add(compute_ns, compute, "replacement recipe compute latency")?;
     }
-    Some((first?, (launch, compute), Some(recipe.id.clone())))
+    Ok(Some(Candidate {
+        kernel_id: None,
+        launch_ns,
+        compute_ns,
+        recipe_id: Some(recipe.id.as_str()),
+    }))
 }
 
-fn evaluate_cost(cost: &KernelCost, node: &NodeInfo, model: &NormalizedModel) -> Option<(u64, u64)> {
+fn evaluate_cost(
+    cost: &KernelCost,
+    node: &NodeInfo,
+    model: &NormalizedModel,
+    profile: &TargetProfile,
+) -> EdgeFitResult<Option<(u64, u64)>> {
     let units = match cost.kind.as_str() {
-        "fixed" => 0,
-        "element" => node.outputs.first().and_then(|name| tensor_elements(model, name))?,
-        "bytes" => node
-            .inputs
-            .iter()
-            .chain(node.outputs.iter())
-            .map(|name| tensor_bytes(model, name))
-            .collect::<Option<Vec<_>>>()?
-            .into_iter()
-            .sum(),
-        "mac" => mac_units(node, model)?,
-        _ => return None,
+        "fixed" => Some(0),
+        "element" => match node.outputs.first() {
+            Some(name) => tensor_elements(model, profile, name)?,
+            None => None,
+        },
+        "bytes" => {
+            let mut total = 0_u64;
+            let mut known = true;
+            for name in node.inputs.iter().chain(node.outputs.iter()).filter(|name| !name.is_empty()) {
+                let Some(bytes) = tensor_bytes(model, profile, name)? else {
+                    known = false;
+                    break;
+                };
+                total = checked_add(total, bytes, "kernel byte cost units")?;
+            }
+            known.then_some(total)
+        }
+        "mac" => mac_units(node, model, profile)?,
+        _ => None,
     };
-    let compute = if units == 0 {
+    let Some(units) = units else {
+        return Ok(None);
+    };
+    let compute_ns = if units == 0 {
         0
     } else {
         ceil_mul_div(units, 1_000_000_000, cost.throughput_per_second)?
     };
-    Some((cost.fixed_ns, compute))
+    Ok(Some((cost.fixed_ns, compute_ns)))
 }
 
-fn mac_units(node: &NodeInfo, model: &NormalizedModel) -> Option<u64> {
+fn mac_units(
+    node: &NodeInfo,
+    model: &NormalizedModel,
+    profile: &TargetProfile,
+) -> EdgeFitResult<Option<u64>> {
     match node.op_type.as_str() {
         "MatMul" | "Gemm" => {
-            let left = model.tensors.get(node.inputs.first()?)?.shape.as_ref()?;
-            let right = model.tensors.get(node.inputs.get(1)?)?.shape.as_ref()?;
-            let m = known_dim(left.get(left.len().checked_sub(2)?)?)?;
-            let k = known_dim(left.last()?)?;
-            let n = known_dim(right.last()?)?;
-            m.checked_mul(k)?.checked_mul(n)
+            let Some(left) = node
+                .inputs
+                .first()
+                .and_then(|name| model.tensors.get(name))
+                .and_then(|tensor| tensor.shape.as_ref())
+            else {
+                return Ok(None);
+            };
+            let Some(right) = node
+                .inputs
+                .get(1)
+                .and_then(|name| model.tensors.get(name))
+                .and_then(|tensor| tensor.shape.as_ref())
+            else {
+                return Ok(None);
+            };
+            let Some(m) = left
+                .len()
+                .checked_sub(2)
+                .and_then(|index| left.get(index))
+                .and_then(|dim| bounded_dim(dim, profile))
+            else {
+                return Ok(None);
+            };
+            let Some(k) = left.last().and_then(|dim| bounded_dim(dim, profile)) else {
+                return Ok(None);
+            };
+            let Some(n) = right.last().and_then(|dim| bounded_dim(dim, profile)) else {
+                return Ok(None);
+            };
+            Ok(Some(checked_mul(
+                checked_mul(m, k, "matrix MAC units")?,
+                n,
+                "matrix MAC units",
+            )?))
         }
         "Conv" => {
-            let output_elements = tensor_elements(model, node.outputs.first()?)?;
-            let input = model.tensors.get(node.inputs.first()?)?.shape.as_ref()?;
-            let channels = known_dim(input.get(1)?)?;
+            let Some(output) = node.outputs.first() else {
+                return Ok(None);
+            };
+            let Some(output_elements) = tensor_elements(model, profile, output)? else {
+                return Ok(None);
+            };
+            let Some(input) = node
+                .inputs
+                .first()
+                .and_then(|name| model.tensors.get(name))
+                .and_then(|tensor| tensor.shape.as_ref())
+            else {
+                return Ok(None);
+            };
+            let Some(channels) = input.get(1).and_then(|dim| bounded_dim(dim, profile)) else {
+                return Ok(None);
+            };
             let group = match node.attributes.get("group") {
-                Some(AttributeValue::Int(value)) if *value > 0 => *value as u64,
+                Some(AttributeValue::Int(value)) if *value > 0 => u64::try_from(*value)
+                    .map_err(|_| "arithmetic overflow converting convolution group".to_string())?,
                 _ => 1,
             };
             let kernel = match node.attributes.get("kernel_shape") {
-                Some(AttributeValue::Ints(values)) => values.iter().try_fold(1_u64, |total, value| {
-                    if *value > 0 { total.checked_mul(*value as u64) } else { None }
-                })?,
+                Some(AttributeValue::Ints(values)) => {
+                    let mut total = 1_u64;
+                    for value in values {
+                        if *value <= 0 {
+                            return Ok(None);
+                        }
+                        let value = u64::try_from(*value).map_err(|_| {
+                            "arithmetic overflow converting convolution kernel dimension".to_string()
+                        })?;
+                        total = checked_mul(total, value, "convolution kernel elements")?;
+                    }
+                    total
+                }
                 _ => 1,
             };
-            output_elements.checked_mul(channels / group)?.checked_mul(kernel)
+            if group > channels || channels % group != 0 {
+                return Ok(None);
+            }
+            Ok(Some(checked_mul(
+                checked_mul(output_elements, channels / group, "convolution MAC units")?,
+                kernel,
+                "convolution MAC units",
+            )?))
         }
-        _ => None,
+        _ => Ok(None),
     }
 }
 
-fn contract_compatible(node: &NodeInfo, rule: &OpRule, model: &NormalizedModel) -> bool {
-    if node
-        .inputs
-        .iter()
-        .chain(node.outputs.iter())
-        .filter(|name| !name.is_empty())
-        .any(|name| {
-            model
+fn contract_compatible(
+    node: &NodeInfo,
+    rule: &OpRule,
+    model: &NormalizedModel,
+    profile: &TargetProfile,
+) -> bool {
+    for (ports, names) in [(&rule.input_dtypes, &node.inputs), (&rule.output_dtypes, &node.outputs)] {
+        if ports.keys().any(|port| names.get(*port).is_none_or(String::is_empty)) {
+            return false;
+        }
+        for (port, name) in names.iter().enumerate().filter(|(_, name)| !name.is_empty()) {
+            let Some(dtype) = model.tensors.get(name).and_then(|tensor| tensor.dtype.as_ref()) else {
+                return false;
+            };
+            let allowed = ports.get(&port).unwrap_or(&rule.dtypes);
+            if !allowed.contains(dtype) {
+                return false;
+            }
+        }
+    }
+    let effective_max_rank = match (rule.max_rank, profile.shape_max_rank) {
+        (Some(rule), Some(global)) => Some(rule.min(global)),
+        (Some(rule), None) => Some(rule),
+        (None, Some(global)) => Some(global),
+        (None, None) => None,
+    };
+    if let Some(max_rank) = effective_max_rank {
+        for name in node
+            .inputs
+            .iter()
+            .chain(node.outputs.iter())
+            .filter(|name| !name.is_empty())
+        {
+            let Some(rank) = model
                 .tensors
                 .get(name)
-                .and_then(|tensor| tensor.dtype.as_ref())
-                .is_none_or(|dtype| !rule.dtypes.contains(dtype))
-        })
-    {
-        return false;
+                .and_then(|tensor| tensor.shape.as_ref())
+                .and_then(|shape| u64::try_from(shape.len()).ok())
+            else {
+                return false;
+            };
+            if rank > max_rank {
+                return false;
+            }
+        }
     }
     for (name, allowed) in &rule.attributes {
         if !node.attributes.get(name).is_some_and(|value| allowed.contains(value)) {
             return false;
         }
     }
-    for (ports, names) in [(&rule.input_dtypes, &node.inputs), (&rule.output_dtypes, &node.outputs)] {
-        for (port, allowed) in ports {
-            let Some(dtype) = names
-                .get(*port)
-                .and_then(|name| model.tensors.get(name))
-                .and_then(|tensor| tensor.dtype.as_ref())
-            else {
-                return false;
+    true
+}
+
+fn validate_plan_invariants(
+    plan: &OptimizationPlan,
+    model: &NormalizedModel,
+    profile: &TargetProfile,
+) -> EdgeFitResult<()> {
+    let invalid = |message: &str| Err(format!("invalid optimization plan invariant: {message}"));
+    if plan.schema != "edgefit.optimization_plan.v1" {
+        return invalid("schema changed");
+    }
+    let accelerator = profile.accelerator.as_ref().ok_or("missing accelerator")?;
+    if plan.model_sha256 != model.sha256
+        || plan.target_id != profile.target_id
+        || plan.target_fingerprint != profile.fingerprint
+        || plan.accelerator_id != accelerator.id
+        || plan.confidence != accelerator.confidence
+    {
+        return invalid("model or target identity is inconsistent");
+    }
+    if plan.assignments.len() != model.nodes.len()
+        || plan
+            .assignments
+            .iter()
+            .enumerate()
+            .any(|(index, assignment)| {
+                assignment.node_index != index || assignment.op_type != model.nodes[index].op_type
+            })
+    {
+        return invalid("assignments are not contiguous model-node assignments");
+    }
+    if plan.segments != collect_segments(&plan.assignments) {
+        return invalid("segments are not exactly the contiguous NPU runs");
+    }
+    if plan.peak_scratchpad_bytes > accelerator.scratchpad_bytes {
+        return invalid("peak scratchpad exceeds accelerator capacity");
+    }
+
+    let mut transfer_ns = 0_u64;
+    let mut transfer_bytes = 0_u64;
+    let mut spill_bytes = 0_u64;
+    let mut active_segment = None;
+    let mut spilled = BTreeSet::<String>::new();
+    for event in &plan.events {
+        if !matches!(event.kind.as_str(), "load" | "store" | "spill" | "reload") {
+            return invalid("event has an unknown kind");
+        }
+        if event.at_node >= model.nodes.len()
+            || plan.assignments[event.at_node].device != "npu"
+            || !model.tensors.contains_key(&event.tensor)
+            || event.bytes % accelerator.dma_burst_bytes != 0
+        {
+            return invalid("event has an invalid node, tensor, or byte reference");
+        }
+        let segment_id = plan
+            .segments
+            .iter()
+            .position(|segment| {
+                event.at_node >= segment.first_node && event.at_node <= segment.last_node
+            })
+            .ok_or_else(|| {
+                "invalid optimization plan invariant: event is outside every NPU segment".to_string()
+            })?;
+        if let Some(previous_segment) = active_segment {
+            if segment_id < previous_segment {
+                return invalid("events are not ordered by NPU segment");
+            }
+        }
+        if active_segment != Some(segment_id) {
+            active_segment = Some(segment_id);
+            spilled.clear();
+        }
+        let bandwidth = if matches!(event.kind.as_str(), "store" | "spill") {
+            accelerator.dma_write_bytes_per_second
+        } else {
+            accelerator.dma_read_bytes_per_second
+        };
+        if event.latency_ns != dma_ns(event.bytes, accelerator.dma_setup_ns, bandwidth)? {
+            return invalid("event latency is inconsistent with its transfer");
+        }
+        match event.kind.as_str() {
+            "spill" => {
+                if !accelerator.spill_allowed || !spilled.insert(event.tensor.clone()) {
+                    return invalid("spill event is illegal");
+                }
+                spill_bytes = checked_add(spill_bytes, event.bytes, "invariant spill byte total")?;
+            }
+            "reload" => {
+                if !spilled.remove(&event.tensor) {
+                    return invalid("reload does not reference a preceding unmatched spill");
+                }
+            }
+            _ => {}
+        }
+        transfer_ns = checked_add(transfer_ns, event.latency_ns, "invariant transfer latency")?;
+        transfer_bytes = checked_add(transfer_bytes, event.bytes, "invariant transfer bytes")?;
+    }
+    if !accelerator.spill_allowed && plan.spill_bytes != 0 {
+        return invalid("spill bytes are non-zero when spilling is disabled");
+    }
+    if transfer_ns != plan.transfer_latency_ns
+        || transfer_bytes != plan.transfer_bytes
+        || spill_bytes != plan.spill_bytes
+    {
+        return invalid("event totals do not match plan totals");
+    }
+
+    let launch = sum_optional(
+        plan.assignments.iter().map(|assignment| assignment.launch_ns),
+        "invariant launch latency",
+    )?;
+    let compute = sum_optional(
+        plan.assignments.iter().map(|assignment| assignment.compute_ns),
+        "invariant compute latency",
+    )?;
+    if launch != plan.launch_latency_ns || compute != plan.compute_latency_ns {
+        return invalid("assignment latency totals do not match plan totals");
+    }
+    let proposed = match launch.zip(compute) {
+        Some((launch, compute)) => Some(checked_add(
+            checked_add(launch, compute, "invariant kernel latency")?,
+            transfer_ns,
+            "invariant proposed latency",
+        )?),
+        None => None,
+    };
+    if proposed != plan.proposed_latency_ns {
+        return invalid("proposed latency is inconsistent");
+    }
+    let mut baseline_blockers = 0_u64;
+    let mut baseline_latency = Some(0_u64);
+    for node in &model.nodes {
+        let cpu = profile
+            .op_rule(&node.domain, &node.op_type)
+            .filter(|rule| contract_compatible(node, rule, model, profile))
+            .and_then(|rule| rule.cpu_cost.as_ref());
+        let cpu_latency = match cpu {
+            Some(cost) => evaluate_cost(cost, node, model, profile)?.map(|(launch, compute)| {
+                checked_add(launch, compute, "invariant CPU node latency")
+            }).transpose()?,
+            None => None,
+        };
+        if cpu_latency.is_none() {
+            baseline_blockers = checked_add(
+                baseline_blockers,
+                1,
+                "invariant CPU baseline blocker count",
+            )?;
+        }
+        baseline_latency = add_optional_latency(
+            baseline_latency,
+            cpu_latency,
+            "invariant CPU baseline latency",
+        )?;
+    }
+    if plan.baseline_blockers != baseline_blockers || plan.baseline_latency_ns != baseline_latency {
+        return invalid("CPU baseline is inconsistent");
+    }
+
+    let blocker_count = u64::try_from(plan.blockers.len())
+        .map_err(|_| "arithmetic overflow converting invariant blocker count".to_string())?;
+    if blocker_count != plan.proposed_blockers
+        || (plan.status == "pass") != plan.blockers.is_empty()
+        || !matches!(plan.status.as_str(), "pass" | "fail")
+        || (plan.proposed_latency_ns.is_none()) != plan.blockers.iter().any(|item| item == "latency_unknown")
+    {
+        return invalid("status, blocker count, or latency state is inconsistent");
+    }
+    for assignment in &plan.assignments {
+        let node = &model.nodes[assignment.node_index];
+        match assignment.device.as_str() {
+            "cpu"
+                if assignment.kernel_id.is_some()
+                    && assignment.recipe_id.is_none()
+                    && assignment.launch_ns.is_some()
+                    && assignment.compute_ns.is_some() => {}
+            "npu"
+                if (assignment.kernel_id.is_some() ^ assignment.recipe_id.is_some())
+                    && assignment.launch_ns.is_some()
+                    && assignment.compute_ns.is_some() => {}
+            "unsupported"
+                if assignment.kernel_id.is_none()
+                    && assignment.recipe_id.is_none()
+                    && assignment.launch_ns.is_none()
+                    && assignment.compute_ns.is_none()
+                    && plan
+                        .blockers
+                        .contains(&format!("node:{} unsupported", assignment.node_index)) => {}
+            _ => return invalid("assignment support and latency state is inconsistent"),
+        }
+        if assignment.device != "npu" && assignment.recipe_id.is_some() {
+            return invalid("recipe is attached to a non-NPU assignment");
+        }
+        if assignment.device == "cpu" {
+            let candidate = match profile
+                .op_rule(&node.domain, &node.op_type)
+                .filter(|rule| contract_compatible(node, rule, model, profile))
+                .and_then(|rule| rule.cpu_cost.as_ref())
+            {
+                Some(cost) => evaluate_cost(cost, node, model, profile)?.map(|(launch, compute)| {
+                    (cost.id.as_str(), launch, compute)
+                }),
+                None => None,
             };
-            if !allowed.contains(dtype) {
-                return false;
+            if !candidate.is_some_and(|(kernel, launch, compute)| {
+                assignment.kernel_id.as_deref() == Some(kernel)
+                    && assignment.launch_ns == Some(launch)
+                    && assignment.compute_ns == Some(compute)
+            }) {
+                return invalid("CPU assignment does not satisfy its kernel contract");
+            }
+        } else if assignment.device == "npu" {
+            let direct = match profile
+                .op_rule(&node.domain, &node.op_type)
+                .filter(|rule| contract_compatible(node, rule, model, profile))
+                .and_then(|rule| rule.npu_cost.as_ref())
+            {
+                Some(cost) => evaluate_cost(cost, node, model, profile)?.map(|(launch, compute)| {
+                    (cost.id.as_str(), launch, compute)
+                }),
+                None => None,
+            };
+            let direct_valid = direct.is_some_and(|(kernel, launch, compute)| {
+                assignment.kernel_id.as_deref() == Some(kernel)
+                    && assignment.launch_ns == Some(launch)
+                    && assignment.compute_ns == Some(compute)
+            });
+            let recipe = match assignment.recipe_id.as_deref().and_then(|recipe_id| {
+                profile
+                    .replacement_recipes
+                    .get(&(node.domain.clone(), node.op_type.clone()))
+                    .filter(|recipe| recipe.id == recipe_id)
+            }) {
+                Some(recipe) => recipe_candidate(recipe, node, model, profile)?,
+                None => None,
+            };
+            let recipe_valid = recipe.is_some_and(|candidate| {
+                assignment.kernel_id.is_none()
+                    && assignment.recipe_id.as_deref() == candidate.recipe_id
+                    && assignment.launch_ns == Some(candidate.launch_ns)
+                    && assignment.compute_ns == Some(candidate.compute_ns)
+            });
+            if !direct_valid && !recipe_valid {
+                return invalid("NPU assignment does not satisfy a kernel or recipe contract");
             }
         }
     }
-    true
+    if plan.plan_hash
+        != plan_fingerprint(
+            &plan.model_sha256,
+            &plan.target_fingerprint,
+            &plan.assignments,
+            &plan.segments,
+            &plan.events,
+        )
+    {
+        return invalid("plan hash is inconsistent");
+    }
+    Ok(())
 }
 
 fn collect_segments(assignments: &[NodeAssignment]) -> Vec<Segment> {
@@ -546,11 +1213,18 @@ fn collect_segments(assignments: &[NodeAssignment]) -> Vec<Segment> {
         if assignment.device == "npu" {
             start.get_or_insert(index);
         } else if let Some(first) = start.take() {
-            segments.push(Segment { id: segments.len(), first_node: first, last_node: index - 1 });
+            let last_node = index
+                .checked_sub(1)
+                .expect("an open NPU segment always has a preceding assignment");
+            segments.push(Segment { id: segments.len(), first_node: first, last_node });
         }
     }
     if let Some(first) = start {
-        segments.push(Segment { id: segments.len(), first_node: first, last_node: assignments.len() - 1 });
+        let last_node = assignments
+            .len()
+            .checked_sub(1)
+            .expect("an open NPU segment requires a non-empty assignment list");
+        segments.push(Segment { id: segments.len(), first_node: first, last_node });
     }
     segments
 }
@@ -571,44 +1245,131 @@ fn consumers(model: &NormalizedModel) -> BTreeMap<String, Vec<usize>> {
     result
 }
 
-fn tensor_bytes(model: &NormalizedModel, name: &str) -> Option<u64> {
-    model.tensors.get(name)?.byte_size_with_bounds(&BTreeMap::new()).map(|item| item.0)
+fn tensor_bytes(
+    model: &NormalizedModel,
+    profile: &TargetProfile,
+    name: &str,
+) -> EdgeFitResult<Option<u64>> {
+    let Some(tensor) = model.tensors.get(name) else {
+        return Ok(None);
+    };
+    if let Some(bytes) = tensor.bytes {
+        return Ok(Some(bytes));
+    }
+    let Some(dtype) = tensor.dtype.as_deref() else {
+        return Ok(None);
+    };
+    let Some(dtype_bytes) = edgefit_ir::dtype_bytes(dtype) else {
+        return Ok(None);
+    };
+    let Some(shape) = tensor.shape.as_ref() else {
+        return Ok(None);
+    };
+    let mut bytes = dtype_bytes;
+    for dim in shape {
+        let Some(value) = bounded_dim(dim, profile) else {
+            return Ok(None);
+        };
+        bytes = checked_mul(bytes, value, "tensor byte size")?;
+    }
+    Ok(Some(bytes))
 }
 
-fn tensor_elements(model: &NormalizedModel, name: &str) -> Option<u64> {
-    let tensor = model.tensors.get(name)?;
-    tensor.shape.as_ref()?.iter().try_fold(1_u64, |total, dim| {
-        total.checked_mul(known_dim(dim)?)
-    })
+fn tensor_elements(
+    model: &NormalizedModel,
+    profile: &TargetProfile,
+    name: &str,
+) -> EdgeFitResult<Option<u64>> {
+    let Some(shape) = model.tensors.get(name).and_then(|tensor| tensor.shape.as_ref()) else {
+        return Ok(None);
+    };
+    let mut total = 1_u64;
+    for dim in shape {
+        let Some(value) = bounded_dim(dim, profile) else {
+            return Ok(None);
+        };
+        total = checked_mul(total, value, "tensor element count")?;
+    }
+    Ok(Some(total))
 }
 
-fn known_dim(dim: &Dim) -> Option<u64> {
-    match dim { Dim::Known(value) if *value >= 0 => Some(*value as u64), _ => None }
+fn bounded_dim(dim: &Dim, profile: &TargetProfile) -> Option<u64> {
+    match dim {
+        Dim::Known(value) if *value >= 0 => u64::try_from(*value).ok(),
+        Dim::Symbol(symbol) => profile.symbol_bounds.get(symbol).copied(),
+        _ => None,
+    }
 }
 
-fn add_optional_latency(current: Option<u64>, next: Option<u64>) -> Option<u64> {
-    current.zip(next).map(|(left, right)| left.saturating_add(right))
+fn add_optional_latency(
+    current: Option<u64>,
+    next: Option<u64>,
+    context: &str,
+) -> EdgeFitResult<Option<u64>> {
+    match current.zip(next) {
+        Some((left, right)) => Ok(Some(checked_add(left, right, context)?)),
+        None => Ok(None),
+    }
 }
 
-fn sum_optional(values: impl Iterator<Item = Option<u64>>) -> Option<u64> {
-    values.fold(Some(0_u64), add_optional_latency)
+fn sum_optional(
+    values: impl Iterator<Item = Option<u64>>,
+    context: &str,
+) -> EdgeFitResult<Option<u64>> {
+    let mut total = Some(0_u64);
+    for value in values {
+        total = add_optional_latency(total, value, context)?;
+    }
+    Ok(total)
 }
 
-fn align_up(value: u64, alignment: u64) -> u64 {
-    let alignment = alignment.max(1);
+fn checked_add(left: u64, right: u64, context: &str) -> EdgeFitResult<u64> {
+    left.checked_add(right)
+        .ok_or_else(|| format!("arithmetic overflow computing {context}"))
+}
+
+fn checked_sub(left: u64, right: u64, context: &str) -> EdgeFitResult<u64> {
+    left.checked_sub(right)
+        .ok_or_else(|| format!("arithmetic underflow computing {context}"))
+}
+
+fn checked_mul(left: u64, right: u64, context: &str) -> EdgeFitResult<u64> {
+    left.checked_mul(right)
+        .ok_or_else(|| format!("arithmetic overflow computing {context}"))
+}
+
+fn align_up(value: u64, alignment: u64) -> EdgeFitResult<u64> {
+    if alignment == 0 {
+        return Err("alignment must be greater than zero".to_string());
+    }
     let remainder = value % alignment;
-    if remainder == 0 { value } else { value.saturating_add(alignment - remainder) }
+    if remainder == 0 {
+        Ok(value)
+    } else {
+        checked_add(value, alignment - remainder, "aligned byte size")
+    }
 }
 
-fn dma_ns(bytes: u64, setup_ns: u64, bandwidth: u64) -> u64 {
-    setup_ns.saturating_add(ceil_mul_div(bytes, 1_000_000_000, bandwidth).unwrap_or(u64::MAX))
+fn dma_ns(bytes: u64, setup_ns: u64, bandwidth: u64) -> EdgeFitResult<u64> {
+    checked_add(
+        setup_ns,
+        ceil_mul_div(bytes, 1_000_000_000, bandwidth)?,
+        "DMA latency",
+    )
 }
 
-fn ceil_mul_div(value: u64, multiplier: u64, divisor: u64) -> Option<u64> {
-    if divisor == 0 { return None; }
-    let numerator = u128::from(value).checked_mul(u128::from(multiplier))?;
-    let result = numerator.checked_add(u128::from(divisor - 1))? / u128::from(divisor);
-    u64::try_from(result).ok()
+fn ceil_mul_div(value: u64, multiplier: u64, divisor: u64) -> EdgeFitResult<u64> {
+    if divisor == 0 {
+        return Err("cannot compute latency with zero throughput".to_string());
+    }
+    let numerator = u128::from(value)
+        .checked_mul(u128::from(multiplier))
+        .ok_or_else(|| "arithmetic overflow computing scaled latency".to_string())?;
+    let result = numerator
+        .checked_add(u128::from(divisor - 1))
+        .ok_or_else(|| "arithmetic overflow computing rounded latency".to_string())?
+        / u128::from(divisor);
+    u64::try_from(result).map_err(|_| "arithmetic overflow converting latency".to_string())
 }
 
 fn plan_fingerprint(
@@ -824,6 +1585,89 @@ mod tests {
         assert_eq!(plan.assignments[0].device, "cpu");
         assert!(plan.segments.is_empty());
         assert!(plan.events.is_empty());
+    }
+
+    #[test]
+    fn contract_mismatch_does_not_bypass_cpu_fallback() {
+        let mut model = parse_model(&[("Relu", &["x"], &["y"])]);
+        model.tensors.get_mut("x").unwrap().dtype = Some("float32".to_string());
+        model.tensors.get_mut("y").unwrap().dtype = Some("float32".to_string());
+        let profile = parse_test_profile(262_144, true, 10_000, 10_000, 1);
+
+        let plan = optimize(&model, &profile).unwrap();
+
+        assert_eq!(plan.status, "fail");
+        assert_eq!(plan.assignments[0].device, "unsupported");
+        assert_eq!(plan.baseline_blockers, 1);
+        assert!(plan.blockers.contains(&"node:0 unsupported".to_string()));
+    }
+
+    #[test]
+    fn port_dtype_override_and_rank_limit_fail_closed() {
+        let model = parse_model(&[("Add", &["x", "bias"], &["y"])]);
+        let mut profile = parse_test_profile(262_144, true, 10_000, 10_000, 1);
+        let rule = profile
+            .allowed_ops
+            .get_mut(&("ai.onnx".to_string(), "Add".to_string()))
+            .unwrap();
+        rule.input_dtypes.insert(1, ["float32".to_string()].into());
+        rule.max_rank = Some(1);
+
+        let plan = optimize(&model, &profile).unwrap();
+
+        assert_eq!(plan.status, "fail");
+        assert_eq!(plan.assignments[0].device, "unsupported");
+    }
+
+    #[test]
+    fn workspace_pressure_is_a_canonical_capacity_failure() {
+        let model = parse_model(&[("Relu", &["x"], &["y"])]);
+        let mut profile = parse_test_profile(4_096, false, 10_000, 10_000, 1);
+        let rule = profile
+            .allowed_ops
+            .get_mut(&("ai.onnx".to_string(), "Relu".to_string()))
+            .unwrap();
+        rule.workspace_bytes = 4_096;
+        rule.cpu_cost = None;
+
+        let plan = optimize(&model, &profile).unwrap();
+
+        assert_eq!(plan.status, "fail");
+        assert!(plan
+            .blockers
+            .iter()
+            .any(|blocker| blocker.contains("workspace scratchpad_unavailable")));
+        assert!(plan.peak_scratchpad_bytes <= 4_096);
+    }
+
+    #[test]
+    fn known_cpu_baseline_wins_when_mixed_plan_is_not_faster() {
+        let model = parse_model(&[("Relu", &["x"], &["y"])]);
+        let profile = parse_test_profile(262_144, true, 1, 1, 100_000);
+
+        let plan = optimize(&model, &profile).unwrap();
+
+        assert_eq!(plan.proposed_blockers, 0);
+        assert_eq!(plan.proposed_latency_ns, plan.baseline_latency_ns);
+        assert_eq!(plan.assignments[0].device, "cpu");
+    }
+
+    #[test]
+    fn arithmetic_overflow_is_an_execution_error() {
+        let model = parse_model(&[("Relu", &["x"], &["y"])]);
+        let mut profile = parse_test_profile(262_144, true, 10_000, 10_000, 1);
+        let cost = profile
+            .allowed_ops
+            .get_mut(&("ai.onnx".to_string(), "Relu".to_string()))
+            .unwrap()
+            .cpu_cost
+            .as_mut()
+            .unwrap();
+        cost.fixed_ns = u64::MAX;
+
+        let error = optimize(&model, &profile).unwrap_err();
+
+        assert!(error.contains("arithmetic overflow"));
     }
 
     fn parse_model(nodes: &[(&str, &[&str], &[&str])]) -> NormalizedModel {
