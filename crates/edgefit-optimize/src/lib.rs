@@ -176,10 +176,10 @@ pub fn optimize(model: &NormalizedModel, profile: &TargetProfile) -> EdgeFitResu
         baseline_latency,
         assignments,
     )?;
-    let plan = if plan_is_better(&proposed_plan, &cpu_plan) {
-        proposed_plan
-    } else {
+    let plan = if cpu_plan.status == "pass" && !plan_is_better(&proposed_plan, &cpu_plan) {
         cpu_plan
+    } else {
+        proposed_plan
     };
     validate_plan_invariants(&plan, model, profile)?;
     Ok(plan)
@@ -1623,11 +1623,12 @@ mod tests {
     fn workspace_pressure_is_a_canonical_capacity_failure() {
         let model = parse_model(&[("Relu", &["x"], &["y"])]);
         let mut profile = parse_test_profile(4_096, false, 10_000, 10_000, 1);
-        profile
+        let rule = profile
             .allowed_ops
             .get_mut(&("ai.onnx".to_string(), "Relu".to_string()))
-            .unwrap()
-            .workspace_bytes = 4_096;
+            .unwrap();
+        rule.workspace_bytes = 4_096;
+        rule.cpu_cost = None;
 
         let plan = optimize(&model, &profile).unwrap();
 
