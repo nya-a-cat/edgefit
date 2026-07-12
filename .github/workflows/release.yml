@@ -14,6 +14,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.version.outputs.version }}
+      python_version: ${{ steps.version.outputs.python_version }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
@@ -23,11 +24,23 @@ jobs:
         shell: bash
         run: |
           version="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n 1)"
+          native_version="$(sed -n 's/^version = "\(.*\)"/\1/p' python/native/Cargo.toml | head -n 1)"
+          python_version="$(sed -n 's/^version = "\(.*\)"/\1/p' python/pyproject.toml | head -n 1)"
           test -n "$version"
+          test "$native_version" = "$version"
+          test -n "$python_version"
+          case "$version" in
+            *-alpha.*) expected_python_version="${version/-alpha./a}" ;;
+            *-beta.*) expected_python_version="${version/-beta./b}" ;;
+            *-rc.*) expected_python_version="${version/-rc./rc}" ;;
+            *) expected_python_version="$version" ;;
+          esac
+          test "$python_version" = "$expected_python_version"
           if [[ "$GITHUB_REF" == refs/tags/* ]]; then
             test "$GITHUB_REF_NAME" = "v$version"
           fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "python_version=$python_version" >> "$GITHUB_OUTPUT"
 
   linux:
     needs: prepare
@@ -36,6 +49,9 @@ jobs:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.12"
       - uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master snapshot
         with:
           toolchain: 1.97.0
@@ -45,14 +61,23 @@ jobs:
           target/release/edgefit --version
           target/release/edgefit target validate targets/esp32s3.yaml
           target/release/edgefit check examples/models/good_tiny.edgefit.json --target targets/esp32s3.yaml
+          target/release/edgefit optimize examples/models/virtual_npu_tiny.edgefit.json --target targets/virtual-npu.yaml --format json --out tmp/release-optimization-plan.json
+          python tools/calibration_contract_gate.py \
+            --edgefit target/release/edgefit \
+            --model examples/models/virtual_npu_tiny.edgefit.json \
+            --target targets/virtual-npu.yaml \
+            --out-dir tmp/release-calibration-acceptance
       - name: Package
         env:
           VERSION: ${{ needs.prepare.outputs.version }}
         run: |
           package="edgefit-$VERSION-linux-x86_64"
           mkdir -p "$package"
-          cp target/release/edgefit README.md LICENSE requirements-onnx.txt "$package/"
+          cp target/release/edgefit README.md CHANGELOG.md LICENSE requirements-onnx.txt "$package/"
           cp -R targets "$package/targets"
+          mkdir -p "$package/examples/models"
+          cp examples/models/good_tiny.edgefit.json examples/models/virtual_npu_tiny.edgefit.json "$package/examples/models/"
+          cp -R examples/calibration "$package/examples/calibration"
           tar -czf "$package.tar.gz" "$package"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -66,6 +91,9 @@ jobs:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.12"
       - uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master snapshot
         with:
           toolchain: 1.97.0
@@ -75,6 +103,8 @@ jobs:
           target/release/edgefit.exe --version
           target/release/edgefit.exe target validate targets/esp32s3.yaml
           target/release/edgefit.exe check examples/models/good_tiny.edgefit.json --target targets/esp32s3.yaml
+          target/release/edgefit.exe optimize examples/models/virtual_npu_tiny.edgefit.json --target targets/virtual-npu.yaml --format json --out tmp/release-optimization-plan.json
+          python tools/calibration_contract_gate.py --edgefit target/release/edgefit.exe --model examples/models/virtual_npu_tiny.edgefit.json --target targets/virtual-npu.yaml --out-dir tmp/release-calibration-acceptance
       - name: Package
         shell: pwsh
         env:
@@ -82,8 +112,12 @@ jobs:
         run: |
           $package = "edgefit-$env:VERSION-windows-x86_64"
           New-Item -ItemType Directory -Path $package | Out-Null
-          Copy-Item target/release/edgefit.exe, README.md, LICENSE, requirements-onnx.txt -Destination $package
+          Copy-Item target/release/edgefit.exe, README.md, CHANGELOG.md, LICENSE, requirements-onnx.txt -Destination $package
           Copy-Item targets -Destination "$package/targets" -Recurse
+          New-Item -ItemType Directory -Path "$package/examples/models" -Force | Out-Null
+          New-Item -ItemType Directory -Path "$package/examples/calibration" -Force | Out-Null
+          Copy-Item examples/models/good_tiny.edgefit.json, examples/models/virtual_npu_tiny.edgefit.json -Destination "$package/examples/models"
+          Copy-Item examples/calibration/*.json -Destination "$package/examples/calibration"
           Compress-Archive -Path $package -DestinationPath "$package.zip"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -97,6 +131,9 @@ jobs:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.12"
       - uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master snapshot
         with:
           toolchain: 1.97.0
@@ -113,14 +150,23 @@ jobs:
           target/universal2/release/edgefit --version
           target/universal2/release/edgefit target validate targets/esp32s3.yaml
           target/universal2/release/edgefit check examples/models/good_tiny.edgefit.json --target targets/esp32s3.yaml
+          target/universal2/release/edgefit optimize examples/models/virtual_npu_tiny.edgefit.json --target targets/virtual-npu.yaml --format json --out tmp/release-optimization-plan.json
+          python tools/calibration_contract_gate.py \
+            --edgefit target/universal2/release/edgefit \
+            --model examples/models/virtual_npu_tiny.edgefit.json \
+            --target targets/virtual-npu.yaml \
+            --out-dir tmp/release-calibration-acceptance
       - name: Package
         env:
           VERSION: ${{ needs.prepare.outputs.version }}
         run: |
           package="edgefit-$VERSION-macos-universal2"
           mkdir -p "$package"
-          cp target/universal2/release/edgefit README.md LICENSE requirements-onnx.txt "$package/"
+          cp target/universal2/release/edgefit README.md CHANGELOG.md LICENSE requirements-onnx.txt "$package/"
           cp -R targets "$package/targets"
+          mkdir -p "$package/examples/models"
+          cp examples/models/good_tiny.edgefit.json examples/models/virtual_npu_tiny.edgefit.json "$package/examples/models/"
+          cp -R examples/calibration "$package/examples/calibration"
           tar -czf "$package.tar.gz" "$package"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -165,9 +211,48 @@ jobs:
           python -m maturin build --release --target ${{ matrix.wheel_target }} --out ../dist
       - name: Verify wheel installation
         shell: bash
+        env:
+          PYTHON_VERSION: ${{ needs.prepare.outputs.python_version }}
         run: |
           python -m pip install dist/*.whl
+          python - <<'PY'
+          import importlib.metadata
+          import os
+
+          actual = importlib.metadata.version("edgefit")
+          expected = os.environ["PYTHON_VERSION"]
+          if actual != expected:
+              raise SystemExit(f"installed edgefit version {actual} != {expected}")
+          PY
           python -m edgefit optimize examples/models/virtual_npu_tiny.edgefit.json --target targets/virtual-npu.yaml --format json
+          python -m edgefit calibration simulate \
+            examples/models/virtual_npu_tiny.edgefit.json \
+            --target targets/virtual-npu.yaml \
+            --scenario examples/calibration/nominal.simulation.json \
+            --out-dir tmp/python-release-nominal
+          python -m edgefit calibration verify \
+            tmp/python-release-nominal/evidence.json \
+            --model examples/models/virtual_npu_tiny.edgefit.json \
+            --target targets/virtual-npu.yaml
+          set +e
+          python -m edgefit calibration simulate \
+            examples/models/virtual_npu_tiny.edgefit.json \
+            --target targets/virtual-npu.yaml \
+            --scenario examples/calibration/latency-fail.simulation.json \
+            --out-dir tmp/python-release-latency-fail
+          simulate_status=$?
+          python -m edgefit calibration verify \
+            tmp/python-release-latency-fail/evidence.json \
+            --model examples/models/virtual_npu_tiny.edgefit.json \
+            --target targets/virtual-npu.yaml
+          verify_status=$?
+          set -e
+          test "$simulate_status" -eq 1
+          test "$verify_status" -eq 1
+          for name in simulator-runtime.bin simulation-trace.json evidence.json verification.json verification.md; do
+            test -f "tmp/python-release-nominal/$name"
+            test -f "tmp/python-release-latency-fail/$name"
+          done
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: python-${{ matrix.label }}-package
@@ -182,6 +267,62 @@ jobs:
           pattern: "*-package"
           merge-multiple: true
           path: dist
+      - name: Verify release package contents
+        env:
+          PYTHON_VERSION: ${{ needs.prepare.outputs.python_version }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          python - <<'PY'
+          import os
+          import tarfile
+          import zipfile
+          from pathlib import Path
+
+          dist = Path("dist")
+          version = os.environ["VERSION"]
+          python_version = os.environ["PYTHON_VERSION"]
+          archives = sorted([*dist.glob("edgefit-*.tar.gz"), *dist.glob("edgefit-*.zip")])
+          wheels = sorted(dist.glob("edgefit-*.whl"))
+          if len(archives) != 3:
+              raise SystemExit(f"expected three CLI archives, found {len(archives)}")
+          if len(wheels) != 3 or any(f"edgefit-{python_version}-" not in path.name for path in wheels):
+              raise SystemExit("expected three version-matched Python wheels")
+
+          required = {
+              "CHANGELOG.md",
+              "LICENSE",
+              "README.md",
+              "requirements-onnx.txt",
+              "targets/virtual-npu.yaml",
+              "examples/models/good_tiny.edgefit.json",
+              "examples/models/virtual_npu_tiny.edgefit.json",
+              "examples/calibration/nominal.simulation.json",
+              "examples/calibration/latency-fail.simulation.json",
+              "examples/calibration/arena-fail.simulation.json",
+          }
+          for archive in archives:
+              if version not in archive.name:
+                  raise SystemExit(f"archive version mismatch: {archive.name}")
+              if archive.suffix == ".zip":
+                  with zipfile.ZipFile(archive) as bundle:
+                      names = bundle.namelist()
+              else:
+                  with tarfile.open(archive, "r:gz") as bundle:
+                      names = bundle.getnames()
+              normalized = {name.replace("\\", "/").lstrip("./") for name in names}
+              roots = {name.split("/", 1)[0] for name in normalized if "/" in name}
+              if len(roots) != 1:
+                  raise SystemExit(f"archive must have one package root: {archive.name}")
+              root = next(iter(roots))
+              relative = {
+                  name[len(root) + 1 :]
+                  for name in normalized
+                  if name.startswith(f"{root}/")
+              }
+              missing = sorted(required - relative)
+              if missing:
+                  raise SystemExit(f"{archive.name} missing: {', '.join(missing)}")
+          PY
       - name: Generate checksums
         working-directory: dist
         run: sha256sum edgefit-* > SHA256SUMS
@@ -217,11 +358,11 @@ jobs:
             --title "EdgeFit $GITHUB_REF_NAME" \
             "${release_flags[@]}"
 
-  release-smoke:
+  release-acceptance:
     if: ${{ startsWith(github.ref, 'refs/tags/v') }}
     needs: publish
     permissions:
       contents: read
-    uses: ./.github/workflows/release-smoke.yml
+    uses: ./.github/workflows/release-acceptance.yml
     with:
       tag: ${{ github.ref_name }}

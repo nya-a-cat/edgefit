@@ -66,7 +66,7 @@ Direct `.onnx` input uses the pinned Python adapter. With
 ```bash
 uv venv .venv
 uv pip install --python .venv/bin/python \
-  -r tools/onnx-normalize/requirements.txt
+  -r requirements-onnx.txt
 
 EDGEFIT_PYTHON="$PWD/.venv/bin/python" \
   ./target/release/edgefit check model.onnx \
@@ -83,12 +83,12 @@ not depend on Python packages.
 
 Prebuilt Python 3.10+ wheels for Linux x86_64, Windows x86_64, and macOS
 universal2 are attached to the
-[`v0.3.0-alpha.1` GitHub Release](https://github.com/nya-a-cat/edgefit/releases/tag/v0.3.0-alpha.1).
+[`v0.4.0-alpha.1` GitHub Release](https://github.com/nya-a-cat/edgefit/releases/tag/v0.4.0-alpha.1).
 Download the wheel matching the current platform, verify it with the release
 `SHA256SUMS`, and install that local file; EdgeFit is not published on PyPI:
 
 ```bash
-python -m pip install ./edgefit-0.3.0a1-cp310-abi3-<platform>.whl
+python -m pip install ./edgefit-0.4.0a1-cp310-abi3-<platform>.whl
 ```
 
 The package uses a prebuilt PyO3 extension over the same Rust engine. It does
@@ -145,7 +145,7 @@ jobs:
       security-events: write
     steps:
       - uses: actions/checkout@v7
-      - uses: nya-a-cat/edgefit@v0.3.0-alpha.1
+      - uses: nya-a-cat/edgefit@v0.4.0-alpha.1
         with:
           model: models/model.onnx
           target: targets/device.yaml
@@ -153,7 +153,7 @@ jobs:
           summary: edgefit-summary.md
 ```
 
-`v0.3.0-alpha.1` is a prerelease intended for reproducible evaluation. Until a
+`v0.4.0-alpha.1` is a prerelease intended for reproducible evaluation. Until a
 stable tag is published, pin long-lived or production workflows to a reviewed
 full commit SHA. On Linux x86_64, the Action downloads the matching release
 archive and verifies it against the published `SHA256SUMS`; it does not install

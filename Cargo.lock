@@ -4,7 +4,7 @@ version = 4
 
 [[package]]
 name = "edgefit-analyze"
-version = "0.3.0-alpha.1"
+version = "0.4.0-alpha.1"
 dependencies = [
  "edgefit-ir",
  "edgefit-target",
@@ -12,11 +12,11 @@ dependencies = [
 
 [[package]]
 name = "edgefit-calibration"
-version = "0.3.0-alpha.1"
+version = "0.4.0-alpha.1"
 
 [[package]]
 name = "edgefit-cli"
-version = "0.3.0-alpha.1"
+version = "0.4.0-alpha.1"
 dependencies = [
  "edgefit-calibration",
  "edgefit-core",
@@ -29,7 +29,7 @@ dependencies = [
 
 [[package]]
 name = "edgefit-core"
-version = "0.3.0-alpha.1"
+version = "0.4.0-alpha.1"
 dependencies = [
  "edgefit-analyze",
  "edgefit-calibration",
@@ -42,18 +42,18 @@ dependencies = [
 
 [[package]]
 name = "edgefit-diff"
-version = "0.3.0-alpha.1"
+version = "0.4.0-alpha.1"
 dependencies = [
  "edgefit-ir",
 ]
 
 [[package]]
 name = "edgefit-ir"
-version = "0.3.0-alpha.1"
+version = "0.4.0-alpha.1"
 
 [[package]]
 name = "edgefit-optimize"
-version = "0.3.0-alpha.1"
+version = "0.4.0-alpha.1"
 dependencies = [
  "edgefit-ir",
  "edgefit-target",
@@ -61,7 +61,7 @@ dependencies = [
 
 [[package]]
 name = "edgefit-policy"
-version = "0.3.0-alpha.1"
+version = "0.4.0-alpha.1"
 dependencies = [
  "edgefit-analyze",
  "edgefit-ir",
@@ -70,7 +70,7 @@ dependencies = [
 
 [[package]]
 name = "edgefit-report"
-version = "0.3.0-alpha.1"
+version = "0.4.0-alpha.1"
 dependencies = [
  "edgefit-analyze",
  "edgefit-ir",
@@ -80,7 +80,7 @@ dependencies = [
 
 [[package]]
 name = "edgefit-target"
-version = "0.3.0-alpha.1"
+version = "0.4.0-alpha.1"
 dependencies = [
  "edgefit-ir",
 ]
