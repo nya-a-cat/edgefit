@@ -122,12 +122,13 @@ For NPU execution, tensor allocations and `workspace_bytes` are rounded up to
 `accelerator.tensor_alignment_bytes`. Workspace is allocated for the duration of
 one node, contributes to `peak_scratchpad_bytes`, and is released after that
 node. It therefore competes with all tensors that must remain resident at the
-same point. `spill_allowed: true` permits eligible resident tensors to be moved
-out and later reloaded, with DMA burst rounding, transfer latency, transfer
-bytes, and spill bytes included in the plan. Protected current inputs cannot be
-spilled. With `spill_allowed: false`, or when no eligible spill victim exists,
-insufficient capacity produces a `scratchpad_unavailable` blocker; EdgeFit does
-not overcommit the scratchpad.
+same point. Transfers are separately rounded to `accelerator.dma_burst_bytes`.
+`spill_allowed: true` permits eligible resident tensors to be moved out and
+later reloaded, with DMA-rounded transfer latency, transfer bytes, and spill
+bytes included in the plan. Protected current inputs cannot be spilled. With
+`spill_allowed: false`, or when no eligible spill victim exists, insufficient
+capacity produces a `scratchpad_unavailable` blocker; EdgeFit does not
+overcommit the scratchpad.
 
 The profile parser bounds each operator's `workspace_bytes` against known
 `memory.ram_bytes`. The tighter NPU feasibility test happens during optimization
@@ -222,9 +223,11 @@ including repeated entries. There is no hidden expansion, recursion, or
 unbounded application: one source node selects at most its one declared recipe,
 and the finite `replacement_ops` list is the complete expansion considered for
 that node. As described above, recipe workspace uses the maximum replacement
-workspace rather than the sum. Direct-kernel and recipe candidates compete on
-their declared estimated cost; the recipe does not grant support to other
-operators or alter the target-wide shape and dtype contracts.
+workspace rather than the sum. This finite list is the recipe maximum: a profile
+must enumerate every replacement step it wants EdgeFit to cost, and EdgeFit does
+not append or recursively expand additional steps. Direct-kernel and recipe
+candidates compete on their declared estimated cost; the recipe does not grant
+support to other operators or alter the target-wide shape and dtype contracts.
 
 Older profiles may omit both `accelerator` and `recipes`. They remain verifier
 contracts but cannot be passed to `edgefit optimize`, which requires an explicit
@@ -415,7 +418,7 @@ Current gate result:
 | `matrix_target_coverage` | `pass` |
 | `matrix_target_passes` | `pass` |
 | `runtime_evidence_verified` | `pass` |
-| Runtime inference verification | `pass` |
+| Runtime inference check (`runtime_smoke_verified`) | `pass` |
 
 ## Confidence Label Review
 
