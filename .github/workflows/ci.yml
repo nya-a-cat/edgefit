@@ -97,8 +97,8 @@ jobs:
       - name: Verify Python and Rust parity
         run: python -m unittest discover -s python/tests -p "test_*.py"
 
-  action-smoke:
-    name: Composite Action smoke
+  action-contract-gate:
+    name: Composite Action contract gate
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -118,18 +118,18 @@ jobs:
           report: edgefit.sarif
           summary: edgefit-summary.md
           install-onnx: "false"
-      - name: Upload smoke reports
+      - name: Upload contract-gate reports
         if: ${{ always() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: edgefit-action-smoke
+          name: edgefit-action-contract-gate
           path: |
             edgefit.sarif
             edgefit-summary.md
           if-no-files-found: error
 
-  performance-smoke:
-    name: Activation planner performance smoke
+  planner-contract-gate:
+    name: Activation planner contract gate
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -154,10 +154,10 @@ jobs:
             --case-id planner-linear-10000 \
             --edgefit-repetitions 3 \
             --measure-peak-rss \
-            --out-dir tmp/performance-smoke
+            --out-dir tmp/planner-contract-gate
 
-  optimizer-performance-smoke:
-    name: Optimizer performance smoke
+  optimizer-contract-gate:
+    name: Optimizer contract gate
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -173,28 +173,29 @@ jobs:
           toolchain: 1.97.0
       - name: Build release CLI
         run: cargo build --workspace --release --locked
-      - name: Verify deterministic 10K-node simulated optimization
+      - name: Verify optimizer 10K pass and fail-closed contracts
         run: |
           python tools/competitive-benchmark/benchmark.py \
             --manifest tools/competitive-benchmark/optimizer_evidence_manifest.json \
             --edgefit target/release/edgefit \
             --tools edgefit \
             --case-id optimizer-linear-10000 \
+            --case-id optimizer-no-spill-blocker \
             --edgefit-repetitions 3 \
             --measure-peak-rss \
-            --out-dir tmp/optimizer-performance-smoke
-      - name: Upload optimizer smoke evidence
+            --out-dir tmp/optimizer-contract-gate
+      - name: Upload optimizer contract evidence
         if: ${{ always() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: edgefit-optimizer-performance-smoke
-          path: tmp/optimizer-performance-smoke/
+          name: edgefit-optimizer-contract-gate
+          path: tmp/optimizer-contract-gate/
           if-no-files-found: error
 
   ci-gate:
     name: ci-gate
     if: ${{ always() }}
-    needs: [rust, lint, python, python_framework, action-smoke, performance-smoke, optimizer-performance-smoke]
+    needs: [rust, lint, python, python_framework, action-contract-gate, planner-contract-gate, optimizer-contract-gate]
     runs-on: ubuntu-latest
     steps:
       - name: Enforce required jobs
@@ -203,9 +204,9 @@ jobs:
           LINT_RESULT: ${{ needs.lint.result }}
           PYTHON_RESULT: ${{ needs.python.result }}
           PYTHON_FRAMEWORK_RESULT: ${{ needs.python_framework.result }}
-          ACTION_RESULT: ${{ needs.action-smoke.result }}
-          PERFORMANCE_RESULT: ${{ needs.performance-smoke.result }}
-          OPTIMIZER_PERFORMANCE_RESULT: ${{ needs.optimizer-performance-smoke.result }}
+          ACTION_RESULT: ${{ needs.action-contract-gate.result }}
+          PERFORMANCE_RESULT: ${{ needs.planner-contract-gate.result }}
+          OPTIMIZER_PERFORMANCE_RESULT: ${{ needs.optimizer-contract-gate.result }}
         run: |
           test "$RUST_RESULT" = success
           test "$LINT_RESULT" = success

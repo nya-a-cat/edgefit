@@ -62,6 +62,8 @@ def render(
     format: str = "json",
     suppress: Iterable[str] = (),
 ) -> str:
+    if format not in {"text", "json", "markdown", "sarif"}:
+        raise EdgeFitError("report format must be text, json, markdown, or sarif")
     prepared = _prepare_model(Path(model))
     profile = target if isinstance(target, TargetProfileSource) else load_profile(target)
     try:

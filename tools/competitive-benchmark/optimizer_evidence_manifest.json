@@ -34,8 +34,8 @@
     },
     {
       "id": "optimizer-linear-10000",
-      "purpose": "Required pull-request simulated optimizer performance smoke",
-      "tags": ["optimizer", "performance", "synthetic", "linear-chain", "10k", "pr-smoke", "simulated"],
+      "purpose": "Required pull-request simulated optimizer scale evidence",
+      "tags": ["optimizer", "performance", "synthetic", "linear-chain", "10k", "simulated"],
       "edgefit_command": "optimize",
       "generated_model": {
         "kind": "linear_op_chain",
@@ -86,6 +86,69 @@
         "expected_plan_blockers": [],
         "expected_plan_recipe_ids": [],
         "require_plan_latency_improvement": true
+      }
+    },
+    {
+      "id": "optimizer-contract-tiny",
+      "purpose": "Low-cost direct-kernel contract acceptance evidence",
+      "tags": ["optimizer", "contract", "direct-kernel", "tiny", "simulated"],
+      "edgefit_command": "optimize",
+      "model_path": "../../examples/models/virtual_npu_tiny.edgefit.json",
+      "expectations": {
+        "require_deterministic_artifact": true,
+        "expected_plan_status": "pass",
+        "expected_plan_assignment_count": 2,
+        "expected_plan_assignment_counts": {"npu": 2},
+        "expected_plan_segment_count": 1,
+        "max_plan_spill_bytes": 0,
+        "min_plan_event_kind_counts": {"load": 2, "store": 1},
+        "max_plan_peak_scratchpad_bytes": 262144,
+        "expected_plan_blockers": [],
+        "expected_plan_recipe_ids": [],
+        "require_plan_latency_improvement": true
+      }
+    },
+    {
+      "id": "optimizer-contract-fail-closed",
+      "purpose": "Low-cost fail-closed evidence when an operator contract is unavailable",
+      "tags": ["optimizer", "contract", "fail-closed", "blocker", "tiny", "simulated"],
+      "edgefit_command": "optimize",
+      "model_path": "../../examples/models/rank_dynamic.edgefit.json",
+      "expectations": {
+        "require_deterministic_artifact": true,
+        "expected_plan_status": "fail",
+        "expected_plan_assignment_count": 2,
+        "expected_plan_assignment_counts": {"unsupported": 2},
+        "expected_plan_segment_count": 0,
+        "max_plan_spill_bytes": 0,
+        "max_plan_peak_scratchpad_bytes": 0,
+        "required_plan_blockers": ["node:0 unsupported", "node:1 unsupported", "latency_unknown"],
+        "expected_plan_recipe_ids": []
+      }
+    },
+    {
+      "id": "optimizer-recipe-tiny",
+      "purpose": "Low-cost trusted replacement recipe acceptance evidence",
+      "tags": ["optimizer", "recipe", "trusted", "tiny", "simulated"],
+      "edgefit_command": "optimize",
+      "generated_model": {
+        "kind": "linear_op_chain",
+        "node_count": 1,
+        "tensor_elements": 1024,
+        "dtype": "int8",
+        "op_type": "HardSwish"
+      },
+      "expectations": {
+        "require_deterministic_artifact": true,
+        "expected_plan_status": "pass",
+        "expected_plan_assignment_count": 1,
+        "expected_plan_assignment_counts": {"npu": 1},
+        "expected_plan_segment_count": 1,
+        "max_plan_spill_bytes": 0,
+        "min_plan_event_kind_counts": {"load": 1, "store": 1},
+        "max_plan_peak_scratchpad_bytes": 262144,
+        "expected_plan_blockers": [],
+        "expected_plan_recipe_ids": ["recipe.hardswish.v1"]
       }
     },
     {

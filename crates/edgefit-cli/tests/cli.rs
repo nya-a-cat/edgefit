@@ -27,6 +27,23 @@ fn run(args: &[&str]) -> Output {
         .expect("run edgefit")
 }
 
+fn run_model_to_json(command: &str, model: &Path, target: &str, out: &Path) -> Output {
+    let mut process = Command::new(bin());
+    process
+        .arg(command)
+        .arg(model)
+        .arg("--target")
+        .arg(target);
+    if command != "snapshot" {
+        process.arg("--format").arg("json");
+    }
+    process
+        .arg("--out")
+        .arg(out)
+        .output()
+        .expect("run edgefit model command")
+}
+
 #[test]
 fn alpha_command_and_exit_code_contract_is_stable() {
     let help = run(&["--help"]);
@@ -535,6 +552,114 @@ fn snapshot_diff_reports_regression() {
     let json = fs::read_to_string(&diff_json).expect("diff json report");
     assert!(json.contains("\"schema\": \"edgefit.diff.v1\""));
     parse_json(&json).expect("parse diff json report");
+
+    fs::remove_dir_all(dir).expect("cleanup temp dir");
+}
+
+#[test]
+fn check_snapshot_and_optimize_execution_failures_write_artifacts_and_exit_two() {
+    let dir = unique_dir("model-command-execution-contract");
+    let missing_model = dir.join("missing.edgefit.json");
+    let target = fixture("targets/virtual-npu.yaml");
+
+    for command in ["check", "snapshot", "optimize"] {
+        let artifact = dir.join(format!("{command}-execution-error.json"));
+        fs::write(&artifact, "stale artifact").expect("write stale artifact");
+
+        let output = run_model_to_json(command, &missing_model, &target, &artifact);
+
+        assert_eq!(output.status.code(), Some(2), "command {command}");
+        assert!(output.stdout.is_empty(), "command {command} wrote stdout");
+        assert!(
+            !output.stderr.is_empty(),
+            "command {command} must explain the execution failure"
+        );
+
+        let contents = fs::read_to_string(&artifact).expect("execution error artifact");
+        assert!(!contents.contains("stale artifact"), "command {command}");
+        assert!(
+            contents.contains("\"schema\": \"edgefit.execution_error.v1\""),
+            "command {command}: {contents}"
+        );
+        assert!(
+            contents.contains("\"status\": \"execution_error\""),
+            "command {command}: {contents}"
+        );
+        assert!(
+            contents.contains(&format!("\"command\": \"{command}\"")),
+            "command {command}: {contents}"
+        );
+        parse_json(&contents).expect("parse execution error artifact");
+    }
+
+    fs::remove_dir_all(dir).expect("cleanup temp dir");
+}
+
+#[test]
+fn check_snapshot_and_optimize_share_the_zero_one_two_exit_contract() {
+    let dir = unique_dir("model-command-exit-contract");
+    let missing_model = dir.join("missing.edgefit.json");
+
+    let cases = [
+        (
+            "check",
+            fixture("examples/models/good_tiny.edgefit.json"),
+            fixture("examples/models/bad_detector.edgefit.json"),
+            fixture("targets/esp32s3.yaml"),
+        ),
+        (
+            "snapshot",
+            fixture("examples/models/good_tiny.edgefit.json"),
+            fixture("examples/models/bad_detector.edgefit.json"),
+            fixture("targets/esp32s3.yaml"),
+        ),
+        (
+            "optimize",
+            fixture("examples/models/virtual_npu_tiny.edgefit.json"),
+            fixture("examples/models/virtual_npu_spill.edgefit.json"),
+            fixture("targets/virtual-npu-no-spill.yaml"),
+        ),
+    ];
+
+    for (command, passing_model, policy_failing_model, target) in cases {
+        let pass_artifact = dir.join(format!("{command}-pass.json"));
+        let pass = run_model_to_json(
+            command,
+            Path::new(&passing_model),
+            &target,
+            &pass_artifact,
+        );
+        assert_eq!(pass.status.code(), Some(0), "passing {command}");
+        let pass_contents = fs::read_to_string(&pass_artifact).expect("pass artifact");
+        assert!(!pass_contents.contains("edgefit.execution_error.v1"));
+
+        let fail_artifact = dir.join(format!("{command}-policy-fail.json"));
+        let policy_fail = run_model_to_json(
+            command,
+            Path::new(&policy_failing_model),
+            &target,
+            &fail_artifact,
+        );
+        assert_eq!(
+            policy_fail.status.code(),
+            Some(1),
+            "policy-failing {command}"
+        );
+        let fail_contents = fs::read_to_string(&fail_artifact).expect("policy failure artifact");
+        assert!(!fail_contents.contains("edgefit.execution_error.v1"));
+
+        let error_artifact = dir.join(format!("{command}-execution-error.json"));
+        let execution_error =
+            run_model_to_json(command, &missing_model, &target, &error_artifact);
+        assert_eq!(
+            execution_error.status.code(),
+            Some(2),
+            "execution-error {command}"
+        );
+        let error_contents =
+            fs::read_to_string(&error_artifact).expect("execution error artifact");
+        assert!(error_contents.contains("edgefit.execution_error.v1"));
+    }
 
     fs::remove_dir_all(dir).expect("cleanup temp dir");
 }

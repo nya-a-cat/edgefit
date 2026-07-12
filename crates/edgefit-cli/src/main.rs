@@ -3,7 +3,7 @@ use edgefit_core::{
     check_model_with_suppressions, optimize_adapter_generated_model, optimize_model,
 };
 use edgefit_diff::{diff_snapshots, load_snapshot, render_diff};
-use edgefit_report::{render_report, render_snapshot};
+use edgefit_report::{render_report, render_snapshot, Report};
 use edgefit_optimize::render_plan;
 use edgefit_target::load_profile;
 use std::env;
@@ -113,13 +113,7 @@ fn run_check(args: &[String]) -> Result<i32, String> {
         Ok(report) => report,
         Err(error) => return fail_with_execution_artifacts("check", &parsed, &error),
     };
-    write_or_print(
-        &render_report(&report, &parsed.format),
-        parsed.out.as_deref(),
-    )?;
-    if let Some(summary) = parsed.summary.as_deref() {
-        write_or_print(&render_report(&report, "markdown"), Some(summary))?;
-    }
+    write_check_artifacts(&report, &parsed)?;
     Ok(if report.status == "fail" {
         EXIT_POLICY_FAIL
     } else {
@@ -357,12 +351,32 @@ fn add_suppression_ids(value: &str, suppressions: &mut Vec<String>) {
     }
 }
 
+fn write_check_artifacts(report: &Report, parsed: &ModelCommand) -> Result<(), String> {
+    let mut write_errors = Vec::new();
+    if let Err(error) = write_or_print(
+        &render_report(report, &parsed.format),
+        parsed.out.as_deref(),
+    ) {
+        write_errors.push(error);
+    }
+    if let Some(summary) = parsed.summary.as_deref() {
+        if let Err(error) = write_or_print(&render_report(report, "markdown"), Some(summary)) {
+            write_errors.push(format!("failed to write summary: {error}"));
+        }
+    }
+    if write_errors.is_empty() {
+        Ok(())
+    } else {
+        Err(write_errors.join("; "))
+    }
+}
+
 fn fail_with_execution_artifacts(
     command: &str,
     parsed: &ModelCommand,
     error: &str,
 ) -> Result<i32, String> {
-    // 执行失败仍需保留机器可读证据，但不得伪装成已完成的模型分析报告。
+    let mut write_errors = Vec::new();
     if let Some(out) = parsed.out.as_deref() {
         let format = if command == "snapshot" {
             "json"
@@ -370,17 +384,23 @@ fn fail_with_execution_artifacts(
             parsed.format.as_str()
         };
         let artifact = render_execution_error(command, &parsed.model, format, error);
-        write_or_print(&artifact, Some(out)).map_err(|write_error| {
-            format!("{error}; failed to write execution error: {write_error}")
-        })?;
+        if let Err(write_error) = write_or_print(&artifact, Some(out)) {
+            write_errors.push(format!("failed to write execution error: {write_error}"));
+        }
     }
     if let Some(summary) = parsed.summary.as_deref() {
         let artifact = render_execution_error(command, &parsed.model, "markdown", error);
-        write_or_print(&artifact, Some(summary)).map_err(|write_error| {
-            format!("{error}; failed to write execution error summary: {write_error}")
-        })?;
+        if let Err(write_error) = write_or_print(&artifact, Some(summary)) {
+            write_errors.push(format!(
+                "failed to write execution error summary: {write_error}"
+            ));
+        }
     }
-    Err(error.to_string())
+    if write_errors.is_empty() {
+        Err(error.to_string())
+    } else {
+        Err(format!("{error}; {}", write_errors.join("; ")))
+    }
 }
 
 fn render_execution_error(command: &str, model: &str, format: &str, error: &str) -> String {
