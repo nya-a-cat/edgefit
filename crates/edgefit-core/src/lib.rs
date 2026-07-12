@@ -1,4 +1,8 @@
 use edgefit_analyze::analyze;
+mod calibration;
+
+pub use calibration::{render_calibration_files, verify_calibration_files};
+
 use edgefit_ir::{
     load_cli_adapter_output, load_normalized_model, parse_cli_adapter_output,
     parse_normalized_model, EdgeFitResult, NormalizedModel,

@@ -7,6 +7,7 @@ authors.workspace = true
 
 [dependencies]
 edgefit-analyze = { path = "../edgefit-analyze" }
+edgefit-calibration = { path = "../edgefit-calibration" }
 edgefit-ir = { path = "../edgefit-ir" }
 edgefit-optimize = { path = "../edgefit-optimize" }
 edgefit-policy = { path = "../edgefit-policy" }

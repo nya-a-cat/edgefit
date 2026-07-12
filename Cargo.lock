@@ -18,6 +18,7 @@ version = "0.3.0-alpha.1"
 name = "edgefit-cli"
 version = "0.3.0-alpha.1"
 dependencies = [
+ "edgefit-calibration",
  "edgefit-core",
  "edgefit-diff",
  "edgefit-ir",
@@ -31,6 +32,7 @@ name = "edgefit-core"
 version = "0.3.0-alpha.1"
 dependencies = [
  "edgefit-analyze",
+ "edgefit-calibration",
  "edgefit-ir",
  "edgefit-optimize",
  "edgefit-policy",

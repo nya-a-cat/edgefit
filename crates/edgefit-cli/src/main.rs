@@ -1,3 +1,5 @@
+mod calibration;
+
 use edgefit_core::{
     check_adapter_generated_model_with_suppressions, check_model,
     check_model_with_suppressions, optimize_adapter_generated_model, optimize_model,
@@ -38,6 +40,7 @@ fn run(args: Vec<String>) -> Result<i32, String> {
     }
     match args[0].as_str() {
         "target" => run_target(&args[1..]),
+        "calibration" => calibration::run(&args[1..]),
         "check" => run_check(&args[1..]),
         "optimize" => run_optimize(&args[1..]),
         "snapshot" => run_snapshot(&args[1..]),
@@ -468,6 +471,7 @@ fn print_help() {
     println!("edgefit <command>");
     println!("  version");
     println!("  target validate <profile>");
+    println!("  calibration verify <evidence.json> --model <model> --target <profile> [--format json|markdown] [--out path]");
     println!("  check <model.onnx|model.edgefit.json> --target <profile> [--format text|json|markdown|sarif] [--out path] [--summary path] [--suppress id[,id]]");
     println!("  optimize <model.onnx|model.edgefit.json> --target <profile> [--format json|markdown] [--out path]");
     println!("  snapshot <model.onnx|model.edgefit.json> --target <profile> --out path");

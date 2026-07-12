@@ -10,6 +10,7 @@ name = "edgefit"
 path = "src/main.rs"
 
 [dependencies]
+edgefit-calibration = { path = "../edgefit-calibration" }
 edgefit-core = { path = "../edgefit-core" }
 edgefit-diff = { path = "../edgefit-diff" }
 edgefit-ir = { path = "../edgefit-ir" }
