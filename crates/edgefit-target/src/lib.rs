@@ -664,24 +664,64 @@ pub fn parse_profile(text: &str, source: PathBuf) -> EdgeFitResult<TargetProfile
         return Err("profile_version must be edgefit.target.v1".to_string());
     }
 
-    if accelerator_section_present
-        && accelerator_id.as_deref().is_none_or(str::is_empty)
-    {
-        return Err("accelerator.id is required when an accelerator section is declared".to_string());
-    }
-    let accelerator = match accelerator_id {
-        Some(id) => Some(AcceleratorProfile {
-            id,
-            confidence: accelerator_confidence.unwrap_or_default(),
-            scratchpad_bytes: accelerator_scratchpad_bytes.unwrap_or(0),
-            tensor_alignment_bytes: accelerator_tensor_alignment_bytes.unwrap_or(0),
-            dma_burst_bytes: accelerator_dma_burst_bytes.unwrap_or(0),
-            dma_setup_ns: accelerator_dma_setup_ns.unwrap_or(0),
-            dma_read_bytes_per_second: accelerator_dma_read_bytes_per_second.unwrap_or(0),
-            dma_write_bytes_per_second: accelerator_dma_write_bytes_per_second.unwrap_or(0),
-            spill_allowed: accelerator_spill_allowed.unwrap_or(false),
-        }),
-        None => None,
+    let accelerator = if accelerator_section_present {
+        let mut missing_fields = Vec::new();
+        if accelerator_id.as_deref().is_none_or(str::is_empty) {
+            missing_fields.push("id");
+        }
+        if accelerator_confidence.as_deref().is_none_or(str::is_empty) {
+            missing_fields.push("confidence");
+        }
+        for (field, present) in [
+            ("scratchpad_bytes", accelerator_scratchpad_bytes.is_some()),
+            (
+                "tensor_alignment_bytes",
+                accelerator_tensor_alignment_bytes.is_some(),
+            ),
+            ("dma_burst_bytes", accelerator_dma_burst_bytes.is_some()),
+            ("dma_setup_ns", accelerator_dma_setup_ns.is_some()),
+            (
+                "dma_read_bytes_per_second",
+                accelerator_dma_read_bytes_per_second.is_some(),
+            ),
+            (
+                "dma_write_bytes_per_second",
+                accelerator_dma_write_bytes_per_second.is_some(),
+            ),
+            ("spill_allowed", accelerator_spill_allowed.is_some()),
+        ] {
+            if !present {
+                missing_fields.push(field);
+            }
+        }
+        if !missing_fields.is_empty() {
+            return Err(format!(
+                "accelerator section requires non-empty id and confidence plus explicit {}; missing or empty: {}",
+                "scratchpad_bytes, tensor_alignment_bytes, dma_burst_bytes, dma_setup_ns, dma_read_bytes_per_second, dma_write_bytes_per_second, and spill_allowed",
+                missing_fields.join(", ")
+            ));
+        }
+        Some(AcceleratorProfile {
+            id: accelerator_id.expect("accelerator id presence was checked"),
+            confidence: accelerator_confidence
+                .expect("accelerator confidence presence was checked"),
+            scratchpad_bytes: accelerator_scratchpad_bytes
+                .expect("accelerator scratchpad_bytes presence was checked"),
+            tensor_alignment_bytes: accelerator_tensor_alignment_bytes
+                .expect("accelerator tensor_alignment_bytes presence was checked"),
+            dma_burst_bytes: accelerator_dma_burst_bytes
+                .expect("accelerator dma_burst_bytes presence was checked"),
+            dma_setup_ns: accelerator_dma_setup_ns
+                .expect("accelerator dma_setup_ns presence was checked"),
+            dma_read_bytes_per_second: accelerator_dma_read_bytes_per_second
+                .expect("accelerator dma_read_bytes_per_second presence was checked"),
+            dma_write_bytes_per_second: accelerator_dma_write_bytes_per_second
+                .expect("accelerator dma_write_bytes_per_second presence was checked"),
+            spill_allowed: accelerator_spill_allowed
+                .expect("accelerator spill_allowed presence was checked"),
+        })
+    } else {
+        None
     };
 
     Ok(TargetProfile {
@@ -1325,13 +1365,58 @@ ops:
     }
 
     #[test]
-    fn rejects_partial_accelerator_without_id() {
+    fn rejects_declared_accelerator_with_empty_id() {
         let text = include_str!("../../../targets/virtual-npu.yaml")
             .replace("id: generic-npu-v1", "id:");
 
         let error = parse_profile(&text, PathBuf::from("target.yaml")).unwrap_err();
 
-        assert!(error.contains("accelerator.id is required"));
+        assert!(error.contains("missing or empty: id"));
+    }
+
+    #[test]
+    fn rejects_empty_accelerator_section() {
+        let text = format!(
+            "{}\naccelerator:\n",
+            include_str!("../../../targets/esp32s3.yaml")
+        );
+
+        let error = parse_profile(&text, PathBuf::from("target.yaml")).unwrap_err();
+
+        assert!(error.contains("accelerator section requires"));
+        assert!(error.contains("id"));
+        assert!(error.contains("spill_allowed"));
+    }
+
+    #[test]
+    fn rejects_partial_accelerator_section() {
+        let text = format!(
+            "{}\naccelerator:\n  id: partial-npu\n  confidence: seed\n",
+            include_str!("../../../targets/esp32s3.yaml")
+        );
+
+        let error = parse_profile(&text, PathBuf::from("target.yaml")).unwrap_err();
+
+        assert!(error.contains("missing or empty: scratchpad_bytes"));
+        assert!(error.contains("dma_setup_ns"));
+        assert!(error.contains("spill_allowed"));
+    }
+
+    #[test]
+    fn accepts_profile_without_accelerator_or_npu_contracts() {
+        let profile = parse_profile(
+            include_str!("../../../targets/esp32s3.yaml"),
+            PathBuf::from("targets/esp32s3.yaml"),
+        )
+        .unwrap();
+
+        profile.validate().unwrap();
+        assert!(profile.accelerator.is_none());
+        assert!(profile
+            .allowed_ops
+            .values()
+            .all(|rule| rule.npu_cost.is_none()));
+        assert!(profile.replacement_recipes.is_empty());
     }
 
     #[test]

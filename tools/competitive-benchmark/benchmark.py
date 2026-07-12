@@ -784,23 +784,22 @@ def run_tool(
         if artifact and artifact.is_file():
             artifact_hashes.append(sha256(artifact))
     statuses = [process_status(process, accepted_codes) for process in processes]
-    first_failure = next(
-        (index for index, status in enumerate(statuses) if status != "completed"),
-        None,
-    )
-    process = processes[first_failure] if first_failure is not None else processes[-1]
-    status = statuses[first_failure] if first_failure is not None else "completed"
+    exit_codes = {process["exit_code"] for process in processes}
+    process = processes[-1]
+    status = statuses[-1]
     combined = "\n".join(
         part for part in [process["stdout"], process["stderr"]] if part
     )
     observations: dict[str, Any] = {}
     detail = ""
-    if status == "completed":
-        exit_codes = {item["exit_code"] for item in processes}
-        if len(exit_codes) != 1:
-            status = "runner_error"
-            detail = f"{name} produced inconsistent exit codes across repetitions"
-        elif artifact and len(artifact_hashes) != repetitions:
+    if len(set(statuses)) != 1:
+        status = "runner_error"
+        detail = f"{name} produced inconsistent statuses across repetitions"
+    elif len(exit_codes) != 1:
+        status = "runner_error"
+        detail = f"{name} produced inconsistent exit codes across repetitions"
+    elif status == "completed":
+        if artifact and len(artifact_hashes) != repetitions:
             status = "runner_error"
             detail = f"{name} completed without writing its requested artifact"
         elif len(set(artifact_hashes)) > 1:
@@ -809,8 +808,20 @@ def run_tool(
         else:
             try:
                 observations = parser(combined, artifact)
+                if name == "edgefit":
+                    artifact_status = observations.get(
+                        "plan_status", observations.get("verdict")
+                    )
+                    expected_exit_code = {"pass": 0, "fail": 1}.get(artifact_status)
+                    if expected_exit_code is None:
+                        raise InputError("EdgeFit artifact has no valid status observation")
+                    if process["exit_code"] != expected_exit_code:
+                        raise InputError(
+                            "EdgeFit exit code is inconsistent with its artifact status"
+                        )
             except InputError as exc:
                 status = "runner_error"
+                observations = {}
                 detail = str(exc)
     elif name == "ort-mobile":
         # ORT 的失败日志仍可能包含有价值的兼容性证据。
@@ -1062,6 +1073,10 @@ def parse_edgefit_plan(_: str, artifact: Path | None) -> dict[str, Any]:
                 assignment["launch_ns"] is None and assignment["compute_ns"] is None,
                 f"EdgeFit plan unsupported assignment {expected_index} must not have latency",
             )
+            require(
+                f"node:{expected_index} unsupported" in plan["blockers"],
+                f"EdgeFit plan unsupported assignment {expected_index} requires a blocker",
+            )
         if device != "npu":
             require(
                 assignment["recipe_id"] is None,
@@ -1117,6 +1132,8 @@ def parse_edgefit_plan(_: str, artifact: Path | None) -> dict[str, Any]:
     transfer_bytes = 0
     transfer_ns = 0
     spill_bytes = 0
+    active_segment = None
+    spilled_tensors: set[str] = set()
     event_fields = {"kind", "tensor", "bytes", "at_node", "latency_ns"}
     for event_index, event in enumerate(events):
         require(isinstance(event, dict), "EdgeFit plan events must contain objects")
@@ -1141,13 +1158,43 @@ def parse_edgefit_plan(_: str, artifact: Path | None) -> dict[str, Any]:
             f"EdgeFit plan event {event_index} at_node is out of range",
         )
         require(
+            assignments[event["at_node"]]["device"] == "npu",
+            f"EdgeFit plan event {event_index} must reference an NPU assignment",
+        )
+        segment_id = next(
+            (
+                segment["id"]
+                for segment in segments
+                if segment["first_node"] <= event["at_node"] <= segment["last_node"]
+            ),
+            None,
+        )
+        require(
+            segment_id is not None,
+            f"EdgeFit plan event {event_index} is outside every NPU segment",
+        )
+        if active_segment != segment_id:
+            active_segment = segment_id
+            spilled_tensors.clear()
+        require(
             nonnegative_integer(event["latency_ns"]),
             f"EdgeFit plan event {event_index} latency_ns must be a non-negative integer",
         )
+        if event["kind"] == "spill":
+            require(
+                event["tensor"] not in spilled_tensors,
+                f"EdgeFit plan event {event_index} repeats an unmatched spill",
+            )
+            spilled_tensors.add(event["tensor"])
+            spill_bytes += event["bytes"]
+        elif event["kind"] == "reload":
+            require(
+                event["tensor"] in spilled_tensors,
+                f"EdgeFit plan event {event_index} reload has no preceding unmatched spill",
+            )
+            spilled_tensors.remove(event["tensor"])
         transfer_bytes += event["bytes"]
         transfer_ns += event["latency_ns"]
-        if event["kind"] == "spill":
-            spill_bytes += event["bytes"]
 
     blockers = plan["blockers"]
     require(
@@ -1176,8 +1223,34 @@ def parse_edgefit_plan(_: str, artifact: Path | None) -> dict[str, Any]:
         "EdgeFit plan spill_bytes does not equal the spill events total",
     )
 
+    assignment_launch_values = [item["launch_ns"] for item in assignments]
+    assignment_compute_values = [item["compute_ns"] for item in assignments]
+    assignment_launch = (
+        sum(assignment_launch_values)
+        if all(value is not None for value in assignment_launch_values)
+        else None
+    )
+    assignment_compute = (
+        sum(assignment_compute_values)
+        if all(value is not None for value in assignment_compute_values)
+        else None
+    )
+    require(
+        proposed["launch_ns"] == assignment_launch,
+        "EdgeFit plan launch_ns must equal the assignment launch latency total",
+    )
+    require(
+        proposed["compute_ns"] == assignment_compute,
+        "EdgeFit plan compute_ns must equal the assignment compute latency total",
+    )
+
     baseline_latency = baseline["latency_ns"]
     proposed_latency = proposed["latency_ns"]
+    latency_unknown = "latency_unknown" in blockers
+    require(
+        (proposed_latency is None) == latency_unknown,
+        "EdgeFit plan proposed latency state is inconsistent with latency_unknown",
+    )
     if proposed["launch_ns"] is not None:
         expected_latency = proposed["launch_ns"] + proposed["compute_ns"] + transfer_ns
         require(

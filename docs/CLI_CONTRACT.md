@@ -27,8 +27,32 @@ New optional flags must preserve existing defaults.
 | `2` | The command could not produce a trustworthy gate result because arguments, input, dependencies, or execution failed. |
 
 Exit code `1` is evidence, not a CLI crash. CI integrations should still retain
-the generated report. Exit code `2` means the requested result was not produced
-and must not be interpreted as either pass or policy fail.
+the generated report or plan. Exit code `2` means the requested result was not
+produced and must not be interpreted as either pass or policy fail.
+
+### Optimizer outcomes
+
+`edgefit optimize` uses all three exit-code classes:
+
+- `0`: planning completed and produced an `edgefit.optimization_plan.v1` document
+  with `status: "pass"` and no unresolved blockers.
+- `1`: planning completed and produced a canonical
+  `edgefit.optimization_plan.v1` fail plan with `status: "fail"`. The plan is
+  valid evidence, not an execution error: it retains the deterministic
+  `plan_hash`, complete node assignments, exact NPU segments, transfer events,
+  totals, and the blockers that prevented a passing plan. Consumers must retain
+  and parse this plan rather than treating it as missing output.
+- `2`: EdgeFit could not produce a trustworthy optimization plan because input
+  preparation, target loading, a dependency, or planner execution failed. No
+  pass or fail plan may be inferred from this result. When execution-error
+  artifact emission applies, the requested output contains
+  `edgefit.execution_error.v1` instead of an optimization plan.
+
+For the same normalized model, target profile, and implementation, pass and fail
+plans are deterministic. A fail plan remains canonical even when latency is
+unknown or scratchpad pressure creates blockers: `status`, blocker counts,
+assignments, segments, events, totals, and `plan_hash` must describe that one
+completed planning result consistently.
 
 ## Stable Machine Schemas
 
@@ -48,14 +72,22 @@ unknown fields and use the schema identifier before reading a document.
 Legacy `edgefit.report.v1` input remains accepted by the diff loader for
 snapshots produced before the dedicated snapshot schema existed.
 
-When direct ONNX normalization or adapter-backed analysis cannot produce a
-trustworthy result, `check` and `snapshot` exit with code `2`. If `--out` was
-provided with `--format json`, `--format markdown`, or `--format sarif`, EdgeFit
-writes `edgefit.execution_error.v1` instead of leaving that evidence path empty.
-Text output retains its human-readable CLI error form. A requested `--summary`
-receives the corresponding Markdown execution-error document. Argument parsing
-and validation failures do not create execution artifacts. These artifacts record
-an execution failure and must never be interpreted as a normal report or snapshot.
+When direct ONNX normalization or adapter-backed analysis or planning cannot
+produce a trustworthy result, `check`, `optimize`, and `snapshot` exit with code
+`2`. If `--out` was provided, EdgeFit overwrites any stale file at that path with
+an `edgefit.execution_error.v1` artifact in the requested machine or Markdown
+format instead of leaving an earlier report, plan, or snapshot in place. For
+`check --format text`, the output artifact retains the human-readable CLI error
+form. A requested `--summary` is likewise overwritten with the corresponding
+Markdown execution-error document. This replacement rule prevents artifacts from
+a previous successful or policy-failing invocation from being mistaken for the
+current result.
+
+Argument parsing and validation failures do not create or replace execution
+artifacts. Execution-error artifacts record an execution failure and must never
+be interpreted as a normal report, optimization plan, or snapshot. Consumers
+must inspect the schema or format-specific execution-error marker before reading
+command-specific fields.
 
 ## Compatibility Gate
 
