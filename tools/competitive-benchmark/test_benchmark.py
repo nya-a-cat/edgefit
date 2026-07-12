@@ -157,6 +157,27 @@ class BenchmarkComparisonTests(unittest.TestCase):
 
         self.assert_plan_rejected(plan)
 
+    def test_optimizer_plan_parser_accepts_recipe_only_npu_assignment(self) -> None:
+        plan = self.valid_plan()
+
+        observations = self.parse_plan(plan)
+
+        self.assertEqual(observations["assignment_device_counts"], {"npu": 1})
+        self.assertEqual(observations["recipe_ids"], ["recipe.hardswish.v1"])
+
+    def test_optimizer_plan_parser_rejects_ambiguous_npu_assignment(self) -> None:
+        plan = self.valid_plan()
+        plan["assignments"][0]["kernel_id"] = "npu.hardswish.v1"
+
+        self.assert_plan_rejected(plan)
+
+    def test_optimizer_plan_parser_rejects_npu_assignment_without_candidate(self) -> None:
+        plan = self.valid_plan()
+        plan["assignments"][0]["kernel_id"] = None
+        plan["assignments"][0]["recipe_id"] = None
+
+        self.assert_plan_rejected(plan)
+
     def test_optimizer_plan_parser_rejects_bad_segment(self) -> None:
         plan = self.valid_plan()
         plan["segments"][0]["last_node"] = 1
@@ -462,7 +483,7 @@ class BenchmarkComparisonTests(unittest.TestCase):
                     "node_index": 0,
                     "op_type": "HardSwish",
                     "device": "npu",
-                    "kernel_id": "npu.hardswish.v1",
+                    "kernel_id": None,
                     "recipe_id": "recipe.hardswish.v1",
                     "launch_ns": 100,
                     "compute_ns": 200,
