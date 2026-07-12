@@ -1,4 +1,4 @@
-name: Release Action smoke
+name: Release Acceptance
 
 on:
   workflow_call:
@@ -54,7 +54,7 @@ jobs:
         if: ${{ always() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: release-action-normalized-reports-${{ matrix.repetition }}
+          name: release-acceptance-normalized-reports-${{ matrix.repetition }}
           path: |
             release-normalized.sarif
             release-normalized.md
@@ -69,7 +69,7 @@ jobs:
       - name: Download installation timings
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          pattern: release-action-normalized-reports-*
+          pattern: release-acceptance-normalized-reports-*
           merge-multiple: true
           path: timings
       - name: Enforce five-run median
@@ -108,17 +108,17 @@ jobs:
           output_info = helper.make_tensor_value_info("output", TensorProto.INT8, [1, 1])
           node = helper.make_node("Add", ["left", "right"], ["output"], name="add_0")
           graph = helper.make_graph(
-              [node], "release_smoke", [left_info, right_info], [output_info]
+              [node], "release_acceptance", [left_info, right_info], [output_info]
           )
           model = helper.make_model(graph, opset_imports=[helper.make_opsetid("", 13)])
           model.ir_version = min(model.ir_version, 10)
-          save(model, "release-smoke.onnx")
+          save(model, "release-acceptance.onnx")
           PY
       - name: Run the published Action
         id: edgefit
         uses: ./
         with:
-          model: release-smoke.onnx
+          model: release-acceptance.onnx
           target: targets/esp32s3.yaml
           report: release-onnx.sarif
           summary: release-onnx.md
@@ -132,7 +132,7 @@ jobs:
         if: ${{ always() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: release-action-onnx-reports
+          name: release-acceptance-onnx-reports
           path: |
             release-onnx.sarif
             release-onnx.md
