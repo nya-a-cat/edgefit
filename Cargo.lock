@@ -11,6 +11,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "edgefit-calibration"
+version = "0.3.0-alpha.1"
+
+[[package]]
 name = "edgefit-cli"
 version = "0.3.0-alpha.1"
 dependencies = [
