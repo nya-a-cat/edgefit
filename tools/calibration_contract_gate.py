@@ -144,6 +144,16 @@ def main() -> int:
     if json.loads(fail_json.read_text(encoding="utf-8")).get("status") != "fail":
         raise RuntimeError("threshold failure did not emit a fail verification")
 
+    runtime_before_alias_check = runtime.read_bytes()
+    alias = run(
+        verify_command(args.edgefit, passing, args.model, args.target, "json", runtime),
+        2,
+    )
+    if "must not alias attachment" not in alias.stderr:
+        raise RuntimeError("attachment output alias was not rejected")
+    if runtime.read_bytes() != runtime_before_alias_check:
+        raise RuntimeError("attachment output alias modified the attachment")
+
     runtime.write_bytes(b"tampered runtime\n")
     error_json = args.out_dir / "tampered.json"
     error_json.write_text("stale artifact\n", encoding="utf-8")

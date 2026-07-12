@@ -1,5 +1,5 @@
 use edgefit_calibration::{
-    render_verification_json, render_verification_markdown, CheckStatus,
+    parse_evidence, render_verification_json, render_verification_markdown, CheckStatus,
 };
 use edgefit_core::verify_calibration_files;
 use edgefit_ir::escape_json;
@@ -23,6 +23,7 @@ struct CalibrationCommand {
 pub fn run(args: &[String]) -> Result<i32, String> {
     let parsed = parse(args)?;
     reject_output_aliases(&parsed)?;
+    reject_attachment_output_aliases(&parsed)?;
 
     let verification = match verify_calibration_files(&parsed.evidence, &parsed.model, &parsed.target) {
         Ok(verification) => verification,
@@ -101,10 +102,40 @@ fn reject_output_aliases(command: &CalibrationCommand) -> Result<(), String> {
     Ok(())
 }
 
+fn reject_attachment_output_aliases(command: &CalibrationCommand) -> Result<(), String> {
+    let Some(out) = command.out.as_deref() else {
+        return Ok(());
+    };
+    let text = fs::read_to_string(&command.evidence)
+        .map_err(|error| format!("failed to read calibration evidence: {error}"))?;
+    let evidence = parse_evidence(&text)
+        .map_err(|error| format!("invalid calibration evidence: {error}"))?;
+    let parent = command
+        .evidence
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    for attachment in evidence.attachments {
+        if paths_alias(out, &parent.join(&attachment.path))? {
+            return Err(format!(
+                "calibration output path must not alias attachment {}",
+                attachment.path
+            ));
+        }
+    }
+    Ok(())
+}
+
 fn paths_alias(left: &Path, right: &Path) -> Result<bool, String> {
     let left = absolute_lexical(left)?;
     let right = absolute_lexical(right)?;
-    Ok(left == right)
+    if left == right {
+        return Ok(true);
+    }
+    match (fs::canonicalize(&left), fs::canonicalize(&right)) {
+        (Ok(left), Ok(right)) => Ok(left == right),
+        _ => Ok(false),
+    }
 }
 
 fn absolute_lexical(path: &Path) -> Result<PathBuf, String> {
