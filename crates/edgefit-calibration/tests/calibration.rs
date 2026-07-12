@@ -254,8 +254,9 @@ fn unsafe_attachment_declarations_fail_closed() {
         let text = replace_once(VALID, "logs/device.txt", path);
         assert!(parse_evidence(&text).is_err(), "path {path}");
     }
+    let normalized = VALID.replace("\r\n", "\n");
     let duplicate = replace_once(
-        VALID,
+        &normalized,
         "  ],\n  \"attestation\"",
         &format!(
             ",\n    {{\"name\":\"other\",\"path\":\"logs/device.txt\",\"media_type\":\"text/plain\",\"bytes\":\"0\",\"sha256\":\"{}\"}}\n  ],\n  \"attestation\"",
