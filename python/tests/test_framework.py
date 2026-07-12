@@ -229,6 +229,43 @@ class FrameworkTests(unittest.TestCase):
             self.assertEqual(tampered.returncode, 2)
             self.assertIn("runtime binary SHA-256 binding mismatch", tampered.stderr)
 
+    def test_calibration_simulation_matches_rust_cli(self) -> None:
+        model = ROOT / "examples/models/virtual_npu_tiny.edgefit.json"
+        target = ROOT / "targets/virtual-npu.yaml"
+        scenario = ROOT / "examples/calibration/nominal.simulation.json"
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            python_out = directory / "python"
+            rust_out = directory / "rust"
+            python_report = edgefit.simulate_calibration(
+                model, target, scenario, python_out
+            )
+            completed = run_rust_cli(
+                "calibration",
+                "simulate",
+                str(model),
+                "--target",
+                str(target),
+                "--scenario",
+                str(scenario),
+                "--out-dir",
+                str(rust_out),
+            )
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            self.assertEqual(python_report, json.loads(completed.stdout))
+            for name in (
+                "simulator-runtime.bin",
+                "simulation-trace.json",
+                "evidence.json",
+                "verification.json",
+                "verification.md",
+            ):
+                self.assertEqual(
+                    (python_out / name).read_bytes(),
+                    (rust_out / name).read_bytes(),
+                    name,
+                )
+
     def test_optimization_rejects_invalid_format_and_target(self) -> None:
         model = ROOT / "examples/models/virtual_npu_tiny.edgefit.json"
         target = ROOT / "targets/virtual-npu.yaml"

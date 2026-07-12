@@ -1,0 +1,9 @@
+{
+  "schema": "edgefit.calibration_simulation.v1",
+  "scenario_id": "arena-fail",
+  "captured_at": "2026-07-13T00:00:00Z",
+  "warmup_runs": "2",
+  "latency_scale_ppm": ["900000", "1000000", "1100000"],
+  "p95_budget_scale_ppm": "1200000",
+  "arena_overhead_bytes": "9000000"
+}

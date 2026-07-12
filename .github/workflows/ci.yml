@@ -193,7 +193,7 @@ jobs:
           if-no-files-found: error
 
   calibration-contract-gate:
-    name: Calibration contract gate
+    name: Calibration simulation contract gate
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -209,14 +209,14 @@ jobs:
           toolchain: 1.97.0
       - name: Build release CLI
         run: cargo build --workspace --release --locked
-      - name: Verify calibration pass, fail, tamper and determinism contracts
+      - name: Run deterministic calibration simulation matrix
         run: |
           python tools/calibration_contract_gate.py \
             --edgefit target/release/edgefit \
-            --model examples/models/good_tiny.edgefit.json \
-            --target targets/esp32s3.yaml \
+            --model examples/models/virtual_npu_tiny.edgefit.json \
+            --target targets/virtual-npu.yaml \
             --out-dir tmp/calibration-contract-gate
-      - name: Upload calibration contract evidence
+      - name: Upload calibration simulation evidence
         if: ${{ always() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:

@@ -4,7 +4,7 @@
 
 use edgefit_core::{
     render_adapter_generated_text, render_calibration_files_with_status, render_normalized_text,
-    render_optimization_text, validate_target_text,
+    render_optimization_text, simulate_calibration_text, validate_target_text,
 };
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
@@ -76,11 +76,34 @@ fn verify_calibration(
         .map_err(PyValueError::new_err)
 }
 
+#[pyfunction]
+#[pyo3(signature = (model_json, adapter_generated, source_model, target, scenario, out_dir))]
+fn simulate_calibration(
+    model_json: &str,
+    adapter_generated: bool,
+    source_model: &str,
+    target: &str,
+    scenario: &str,
+    out_dir: &str,
+) -> PyResult<(String, String)> {
+    simulate_calibration_text(
+        model_json,
+        adapter_generated,
+        source_model,
+        target,
+        scenario,
+        out_dir,
+    )
+    .map(|result| (result.status, result.verification_json))
+    .map_err(PyValueError::new_err)
+}
+
 #[pymodule]
 fn _native(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(analyze, module)?)?;
     module.add_function(wrap_pyfunction!(optimize, module)?)?;
     module.add_function(wrap_pyfunction!(validate_target, module)?)?;
     module.add_function(wrap_pyfunction!(verify_calibration, module)?)?;
+    module.add_function(wrap_pyfunction!(simulate_calibration, module)?)?;
     Ok(())
 }

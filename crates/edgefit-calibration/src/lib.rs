@@ -9,6 +9,7 @@ mod hash;
 mod json;
 mod render;
 mod schema;
+mod simulation;
 mod verify;
 
 pub use hash::sha256_hex;
@@ -20,5 +21,8 @@ pub use schema::{
     Evidence, ExpectedBindings, Identity, LoadedAttachment, Measurements, Metrics, Result,
     RuntimeResult, Thresholds, Verification, VerificationBudget, EVIDENCE_SCHEMA,
     MAX_ATTACHMENTS, MAX_ATTACHMENT_BYTES, MAX_LATENCY_SAMPLES, VERIFICATION_SCHEMA,
+};
+pub use simulation::{
+    parse_simulation_scenario, SimulationScenario, SIMULATION_SCHEMA, SIMULATION_TRACE_SCHEMA,
 };
 pub use verify::{verify, verify_json};

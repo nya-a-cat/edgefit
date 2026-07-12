@@ -102,6 +102,33 @@ reports = edgefit.batch(["a.onnx", "b.onnx"], "targets/device.yaml")
 plan = edgefit.optimize("model.onnx", "targets/virtual-npu.yaml")
 ```
 
+### Deterministic calibration simulation
+
+The source build can generate controlled, reproducible Calibration v1 evidence
+without claiming a real device measurement:
+
+```bash
+./target/release/edgefit calibration simulate \
+  examples/models/virtual_npu_tiny.edgefit.json \
+  --target targets/virtual-npu.yaml \
+  --scenario examples/calibration/nominal.simulation.json \
+  --out-dir edgefit-simulation
+
+./target/release/edgefit calibration verify \
+  edgefit-simulation/evidence.json \
+  --model examples/models/virtual_npu_tiny.edgefit.json \
+  --target targets/virtual-npu.yaml
+```
+
+The simulator runs the normal analyzer and optimizer, then applies the exact
+ppm perturbations declared by the scenario. Its evidence is SHA-256-bound and
+explicitly marked `simulated`; it provides no device attestation, hardware
+latency, or authority to modify a target profile.
+
+`--out-dir` must not already exist. A completed directory contains
+`simulator-runtime.bin`, `simulation-trace.json`, `evidence.json`,
+`verification.json`, and `verification.md`.
+
 
 ## Use It as a Pull Request Gate
 
@@ -162,8 +189,8 @@ their source, confidence, and last verification date.
 ## Hosted Evidence
 
 The normal CI gate runs Rust, ONNX adapter, and Python binding tests on Linux,
-Windows, and macOS, plus Composite Action, 10K-node activation-planner, and
-optimizer pass/fail contract gates.
+Windows, and macOS, plus Composite Action, 10K-node activation-planner,
+optimizer, and deterministic calibration-simulation contract gates.
 
 The hosted maturity run processed deterministic linear graphs five times each:
 
@@ -197,6 +224,8 @@ and fixed manifests under `tools/competitive-benchmark/` retain the evidence.
 ```text
 edgefit check             verify a model against a target
 edgefit optimize          estimate and partition an accelerator execution plan
+edgefit calibration verify    verify hash-bound Calibration v1 evidence
+edgefit calibration simulate  generate controlled simulated evidence
 edgefit target validate   validate a target profile
 edgefit snapshot          freeze a reviewable result
 edgefit diff              block deployment regressions
@@ -208,7 +237,8 @@ compatibility contracts. Incompatible changes require a new schema version.
 ## Architecture
 
 - `crates/edgefit-*` — dependency-light Rust core for IR, target profiles,
-  analysis, policy, hardware planning, reporting, diffs, and CLI orchestration.
+  analysis, policy, hardware planning, calibration simulation/verification,
+  reporting, diffs, and CLI orchestration.
 - `tools/onnx-normalize/` — replaceable Python boundary for official ONNX
   checking and shape inference.
 - `tools/competitive-benchmark/` — fixed-corpus evidence runner that preserves
@@ -224,6 +254,8 @@ dependency.
   `targets/virtual-npu.yaml` is explicitly simulated.
 - Hosted timings measure complete CLI processes, not device inference.
 - Optimizer latency is derived from profile costs, not measured on hardware.
+- Calibration simulation applies controlled perturbations to static estimates;
+  it is not empirical calibration or device evidence.
 - Passing verification or optimization planning does not establish firmware,
   runtime, power, or real-device memory compatibility.
 - Direct ONNX normalization rejects nested subgraphs, local functions, and sparse

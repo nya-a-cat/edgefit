@@ -9,6 +9,7 @@ from pathlib import Path
 from .framework import (
     EdgeFitError,
     _run_calibration,
+    _run_calibration_simulation,
     check,
     optimize,
     render,
@@ -40,16 +41,29 @@ def main() -> int:
     verify_command.add_argument("--target", required=True)
     verify_command.add_argument("--format", choices=["json", "markdown"], default="json")
     verify_command.add_argument("--out")
+    simulate_command = calibration_subcommands.add_parser("simulate")
+    simulate_command.add_argument("model")
+    simulate_command.add_argument("--target", required=True)
+    simulate_command.add_argument("--scenario", required=True)
+    simulate_command.add_argument("--out-dir", required=True)
     args = parser.parse_args()
 
     try:
         if args.command == "calibration":
-            status, output = _run_calibration(
-                args.evidence,
-                args.model,
-                args.target,
-                args.format,
-            )
+            if args.calibration_command == "simulate":
+                status, output = _run_calibration_simulation(
+                    args.model,
+                    args.target,
+                    args.scenario,
+                    args.out_dir,
+                )
+            else:
+                status, output = _run_calibration(
+                    args.evidence,
+                    args.model,
+                    args.target,
+                    args.format,
+                )
             report = {"status": status}
         elif args.command == "optimize":
             report = optimize(args.model, args.target)
@@ -60,7 +74,7 @@ def main() -> int:
     except (EdgeFitError, OSError) as exc:
         parser.exit(2, f"edgefit: {exc}\n")
 
-    if args.out:
+    if getattr(args, "out", None):
         output_path = Path(args.out)
         output_path.parent.mkdir(parents=True, exist_ok=True)
         output_path.write_text(output, encoding="utf-8")

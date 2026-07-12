@@ -203,9 +203,9 @@ struct ModelCommand {
     suppressions: Vec<String>,
 }
 
-struct PreparedModel {
-    path: PathBuf,
-    cli_adapter_output: bool,
+pub(crate) struct PreparedModel {
+    pub(crate) path: PathBuf,
+    pub(crate) cli_adapter_output: bool,
 }
 
 impl Drop for PreparedModel {
@@ -216,7 +216,7 @@ impl Drop for PreparedModel {
     }
 }
 
-fn prepare_model(model: &str) -> Result<PreparedModel, String> {
+pub(crate) fn prepare_model(model: &str) -> Result<PreparedModel, String> {
     let path = PathBuf::from(model);
     if path
         .extension()
@@ -472,6 +472,7 @@ fn print_help() {
     println!("  version");
     println!("  target validate <profile>");
     println!("  calibration verify <evidence.json> --model <model> --target <profile> [--format json|markdown] [--out path]");
+    println!("  calibration simulate <model.onnx|model.edgefit.json> --target <profile> --scenario <scenario.json> --out-dir <new-directory>");
     println!("  check <model.onnx|model.edgefit.json> --target <profile> [--format text|json|markdown|sarif] [--out path] [--summary path] [--suppress id[,id]]");
     println!("  optimize <model.onnx|model.edgefit.json> --target <profile> [--format json|markdown] [--out path]");
     println!("  snapshot <model.onnx|model.edgefit.json> --target <profile> --out path");

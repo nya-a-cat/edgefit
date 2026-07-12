@@ -1,102 +1,119 @@
+"""调度正式 Calibration 模拟器并核对确定性、失败和篡改契约。"""
+
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
+import shutil
 import subprocess
 from pathlib import Path
 
 
-def digest(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
+ROOT = Path(__file__).resolve().parents[1]
+OUTPUT_FILES = (
+    "simulator-runtime.bin",
+    "simulation-trace.json",
+    "evidence.json",
+    "verification.json",
+    "verification.md",
+)
 
 
 def run(command: list[str], expected: int) -> subprocess.CompletedProcess[str]:
     result = subprocess.run(command, check=False, capture_output=True, text=True)
     if result.returncode != expected:
         raise RuntimeError(
-            f"expected exit {expected}, got {result.returncode}: {' '.join(command)}\n{result.stderr}"
+            f"expected exit {expected}, got {result.returncode}: {' '.join(command)}\n"
+            f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
         )
     return result
 
 
-def write_evidence(
-    path: Path,
+def simulate(
+    edgefit: Path,
     model: Path,
     target: Path,
-    runtime: Path,
-    latency_budget: int,
-) -> None:
-    evidence = {
-        "schema": "edgefit.calibration_evidence.v1",
-        "identity": {
-            "target_id": "esp32s3_custom_v1",
-            "device_id": "ci-calibration-device",
-            "runtime_name": "edgefit-contract-runtime",
-            "runtime_version": "1.0.0",
-        },
-        "environment": {
-            "operating_system": "github-hosted",
-            "architecture": "x86_64",
-            "hardware": "synthetic-contract-fixture",
-            "toolchain": "edgefit-ci",
-        },
-        "capture": {
-            "captured_at": "2026-07-12T12:34:56Z",
-            "command": "edgefit calibration contract fixture",
-            "warmup_runs": "1",
-            "measured_runs": "3",
-        },
-        "bindings": {
-            "model_sha256": digest(model),
-            "target_profile_sha256": digest(target),
-            "runtime_binary_sha256": digest(runtime),
-        },
-        "runtime": {"accepted": True, "rejected_reason": None},
-        "measurements": {
-            "arena_high_water": {"unit": "bytes", "value": "300000"},
-            "latency": {"unit": "ns", "samples": ["10", "20", "30"]},
-        },
-        "thresholds": {
-            "arena_budget": {"unit": "bytes", "value": "350000"},
-            "p95_latency_budget": {"unit": "ns", "value": str(latency_budget)},
-        },
-        "attachments": [
-            {
-                "name": "runtime-binary",
-                "path": runtime.name,
-                "media_type": "application/octet-stream",
-                "bytes": str(runtime.stat().st_size),
-                "sha256": digest(runtime),
-            }
+    scenario: Path,
+    out_dir: Path,
+    expected: int,
+) -> subprocess.CompletedProcess[str]:
+    return run(
+        [
+            str(edgefit),
+            "calibration",
+            "simulate",
+            str(model),
+            "--target",
+            str(target),
+            "--scenario",
+            str(scenario),
+            "--out-dir",
+            str(out_dir),
         ],
-        "attestation": {"kind": "none"},
-    }
-    path.write_text(json.dumps(evidence, indent=2) + "\n", encoding="utf-8")
+        expected,
+    )
 
 
-def verify_command(
+def verify(
     edgefit: Path,
     evidence: Path,
     model: Path,
     target: Path,
-    format: str,
     out: Path,
-) -> list[str]:
-    return [
-        str(edgefit),
-        "calibration",
-        "verify",
-        str(evidence),
-        "--model",
-        str(model),
-        "--target",
-        str(target),
-        "--format",
-        format,
-        "--out",
-        str(out),
-    ]
+    expected: int,
+) -> subprocess.CompletedProcess[str]:
+    return run(
+        [
+            str(edgefit),
+            "calibration",
+            "verify",
+            str(evidence),
+            "--model",
+            str(model),
+            "--target",
+            str(target),
+            "--format",
+            "json",
+            "--out",
+            str(out),
+        ],
+        expected,
+    )
+
+
+def require_simulated(directory: Path, expected_status: str) -> dict[str, object]:
+    for name in OUTPUT_FILES:
+        if not (directory / name).is_file():
+            raise RuntimeError(f"simulation output is missing {name}")
+    evidence = json.loads((directory / "evidence.json").read_text(encoding="utf-8"))
+    trace = json.loads((directory / "simulation-trace.json").read_text(encoding="utf-8"))
+    verification = json.loads((directory / "verification.json").read_text(encoding="utf-8"))
+    if evidence.get("schema") != "edgefit.calibration_evidence.v1":
+        raise RuntimeError("simulation emitted an unexpected evidence schema")
+    if trace.get("schema") != "edgefit.calibration_simulation_trace.v1":
+        raise RuntimeError("simulation emitted an unexpected trace schema")
+    if verification.get("schema") != "edgefit.calibration_verification.v1":
+        raise RuntimeError("simulation emitted an unexpected verification schema")
+    if evidence["environment"]["operating_system"] != "simulated":
+        raise RuntimeError("evidence is not explicitly simulated")
+    if evidence["attestation"]["kind"] != "none":
+        raise RuntimeError("simulation unexpectedly claims attestation")
+    if trace.get("confidence") != "simulated":
+        raise RuntimeError("trace is not explicitly simulated")
+    if "not_real_hardware" not in trace.get("limitations", []):
+        raise RuntimeError("trace omits its real-hardware limitation")
+    if verification.get("status") != expected_status:
+        raise RuntimeError(f"expected verification status {expected_status}")
+    return trace
+
+
+def require_failed_check(directory: Path, check_id: str) -> None:
+    verification = json.loads(
+        (directory / "verification.json").read_text(encoding="utf-8")
+    )
+    checks = {item["id"]: item["status"] for item in verification["checks"]}
+    if checks.get(check_id) != "fail":
+        raise RuntimeError(f"expected failed verification check {check_id}")
 
 
 def main() -> int:
@@ -108,45 +125,57 @@ def main() -> int:
     args = parser.parse_args()
 
     args.out_dir.mkdir(parents=True, exist_ok=True)
-    runtime = args.out_dir / "runtime.bin"
-    runtime.write_bytes(b"edgefit calibration contract runtime\n")
-
-    passing = args.out_dir / "pass-evidence.json"
-    write_evidence(passing, args.model, args.target, runtime, 30)
-    pass_json = args.out_dir / "pass.json"
-    pass_json_repeat = args.out_dir / "pass-repeat.json"
-    pass_markdown = args.out_dir / "pass.md"
-    run(verify_command(args.edgefit, passing, args.model, args.target, "json", pass_json), 0)
-    run(
-        verify_command(
-            args.edgefit, passing, args.model, args.target, "json", pass_json_repeat
-        ),
+    scenarios = ROOT / "examples/calibration"
+    nominal_a = args.out_dir / "nominal-a"
+    nominal_b = args.out_dir / "nominal-b"
+    nominal_a_result = simulate(
+        args.edgefit,
+        args.model,
+        args.target,
+        scenarios / "nominal.simulation.json",
+        nominal_a,
         0,
     )
-    run(
-        verify_command(
-            args.edgefit, passing, args.model, args.target, "markdown", pass_markdown
-        ),
+    simulate(
+        args.edgefit,
+        args.model,
+        args.target,
+        scenarios / "nominal.simulation.json",
+        nominal_b,
         0,
     )
-    if pass_json.read_bytes() != pass_json_repeat.read_bytes():
-        raise RuntimeError("calibration JSON output is not deterministic")
-    parsed = json.loads(pass_json.read_text(encoding="utf-8"))
-    if parsed.get("schema") != "edgefit.calibration_verification.v1":
-        raise RuntimeError("unexpected calibration verification schema")
-    if parsed.get("status") != "pass":
-        raise RuntimeError("passing calibration evidence did not pass")
+    require_simulated(nominal_a, "pass")
+    require_simulated(nominal_b, "pass")
+    if nominal_a_result.stdout != (nominal_a / "verification.json").read_text(
+        encoding="utf-8"
+    ):
+        raise RuntimeError("simulation stdout does not match canonical verification JSON")
+    for name in OUTPUT_FILES:
+        if (nominal_a / name).read_bytes() != (nominal_b / name).read_bytes():
+            raise RuntimeError(f"simulation output {name} is not deterministic")
+    nominal_before = {name: (nominal_a / name).read_bytes() for name in OUTPUT_FILES}
+    existing = simulate(
+        args.edgefit,
+        args.model,
+        args.target,
+        scenarios / "nominal.simulation.json",
+        nominal_a,
+        2,
+    )
+    if "already exists" not in existing.stderr:
+        raise RuntimeError("existing simulation directory was not rejected")
+    for name, expected in nominal_before.items():
+        if (nominal_a / name).read_bytes() != expected:
+            raise RuntimeError(f"existing simulation output {name} was modified")
 
-    failing = args.out_dir / "fail-evidence.json"
-    write_evidence(failing, args.model, args.target, runtime, 29)
-    fail_json = args.out_dir / "fail.json"
-    run(verify_command(args.edgefit, failing, args.model, args.target, "json", fail_json), 1)
-    if json.loads(fail_json.read_text(encoding="utf-8")).get("status") != "fail":
-        raise RuntimeError("threshold failure did not emit a fail verification")
-
+    runtime = nominal_a / "simulator-runtime.bin"
     runtime_before_alias_check = runtime.read_bytes()
-    alias = run(
-        verify_command(args.edgefit, passing, args.model, args.target, "json", runtime),
+    alias = verify(
+        args.edgefit,
+        nominal_a / "evidence.json",
+        args.model,
+        args.target,
+        runtime,
         2,
     )
     if "must not alias attachment" not in alias.stderr:
@@ -154,18 +183,100 @@ def main() -> int:
     if runtime.read_bytes() != runtime_before_alias_check:
         raise RuntimeError("attachment output alias modified the attachment")
 
-    runtime.write_bytes(b"tampered runtime\n")
-    error_json = args.out_dir / "tampered.json"
-    error_json.write_text("stale artifact\n", encoding="utf-8")
-    tampered = run(
-        verify_command(args.edgefit, passing, args.model, args.target, "json", error_json),
+    latency_fail = args.out_dir / "latency-fail"
+    simulate(
+        args.edgefit,
+        args.model,
+        args.target,
+        scenarios / "latency-fail.simulation.json",
+        latency_fail,
+        1,
+    )
+    require_simulated(latency_fail, "fail")
+    require_failed_check(latency_fail, "evidence_latency_threshold")
+
+    arena_fail = args.out_dir / "arena-fail"
+    simulate(
+        args.edgefit,
+        args.model,
+        args.target,
+        scenarios / "arena-fail.simulation.json",
+        arena_fail,
+        1,
+    )
+    require_simulated(arena_fail, "fail")
+    require_failed_check(arena_fail, "evidence_arena_threshold")
+
+    spill = args.out_dir / "spill-reload"
+    simulate(
+        args.edgefit,
+        ROOT / "examples/models/virtual_npu_spill.edgefit.json",
+        ROOT / "targets/virtual-npu-small-scratchpad.yaml",
+        scenarios / "nominal.simulation.json",
+        spill,
+        0,
+    )
+    spill_trace = require_simulated(spill, "pass")
+    events = spill_trace["plan"]["events"]
+    if int(events["spill"]) == 0 or int(events["reload"]) == 0:
+        raise RuntimeError("spill scenario did not retain spill/reload plan evidence")
+
+    blocked = args.out_dir / "blocked"
+    blocked_result = simulate(
+        args.edgefit,
+        ROOT / "examples/models/virtual_npu_spill.edgefit.json",
+        ROOT / "targets/virtual-npu-no-spill.yaml",
+        scenarios / "nominal.simulation.json",
+        blocked,
         2,
     )
-    if "runtime binary SHA-256 binding mismatch" not in tampered.stderr:
-        raise RuntimeError("tampered runtime did not report its identity failure")
-    error = json.loads(error_json.read_text(encoding="utf-8"))
+    if blocked.exists() or "without blockers" not in blocked_result.stderr:
+        raise RuntimeError("blocked plan created a formal simulation directory")
+
+    tampered_runtime = args.out_dir / "tampered-runtime"
+    shutil.copytree(nominal_a, tampered_runtime)
+    (tampered_runtime / "simulator-runtime.bin").write_bytes(b"tampered runtime\n")
+    tampered_runtime_verification = args.out_dir / "tampered-runtime-verification.json"
+    tampered_runtime_verification.write_text("stale artifact\n", encoding="utf-8")
+    tampered_runtime_result = verify(
+        args.edgefit,
+        tampered_runtime / "evidence.json",
+        args.model,
+        args.target,
+        tampered_runtime_verification,
+        2,
+    )
+    if "runtime binary SHA-256 binding mismatch" not in tampered_runtime_result.stderr:
+        raise RuntimeError("tampered runtime did not report its binding failure")
+    error = json.loads(tampered_runtime_verification.read_text(encoding="utf-8"))
     if error.get("schema") != "edgefit.calibration_verification_error.v1":
         raise RuntimeError("tampered runtime did not replace the stale artifact")
+
+    tampered_trace = args.out_dir / "tampered-trace"
+    shutil.copytree(nominal_a, tampered_trace)
+    with (tampered_trace / "simulation-trace.json").open("ab") as file:
+        file.write(b"tampered\n")
+    tampered_trace_result = verify(
+        args.edgefit,
+        tampered_trace / "evidence.json",
+        args.model,
+        args.target,
+        args.out_dir / "tampered-trace-verification.json",
+        2,
+    )
+    if "simulation-trace.json" not in tampered_trace_result.stderr:
+        raise RuntimeError("tampered trace did not report its attachment failure")
+
+    binding_mismatch = verify(
+        args.edgefit,
+        nominal_a / "evidence.json",
+        ROOT / "examples/models/virtual_npu_segmented.edgefit.json",
+        args.target,
+        args.out_dir / "binding-mismatch-verification.json",
+        2,
+    )
+    if "model SHA-256 binding mismatch" not in binding_mismatch.stderr:
+        raise RuntimeError("model binding mismatch was not reported")
     return 0
 
 

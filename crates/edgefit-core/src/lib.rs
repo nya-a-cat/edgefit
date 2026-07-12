@@ -2,7 +2,8 @@ use edgefit_analyze::analyze;
 mod calibration;
 
 pub use calibration::{
-    render_calibration_files, render_calibration_files_with_status, verify_calibration_files,
+    render_calibration_files, render_calibration_files_with_status, simulate_calibration_files,
+    simulate_calibration_text, verify_calibration_files, CalibrationSimulationResult,
 };
 
 use edgefit_ir::{
