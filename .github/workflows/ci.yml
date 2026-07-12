@@ -192,10 +192,42 @@ jobs:
           path: tmp/optimizer-contract-gate/
           if-no-files-found: error
 
+  calibration-contract-gate:
+    name: Calibration contract gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.12"
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master snapshot
+        with:
+          toolchain: 1.97.0
+      - name: Build release CLI
+        run: cargo build --workspace --release --locked
+      - name: Verify calibration pass, fail, tamper and determinism contracts
+        run: |
+          python tools/calibration_contract_gate.py \
+            --edgefit target/release/edgefit \
+            --model examples/models/good_tiny.edgefit.json \
+            --target targets/esp32s3.yaml \
+            --out-dir tmp/calibration-contract-gate
+      - name: Upload calibration contract evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: edgefit-calibration-contract-gate
+          path: tmp/calibration-contract-gate/
+          if-no-files-found: error
+
   ci-gate:
     name: ci-gate
     if: ${{ always() }}
-    needs: [rust, lint, python, python_framework, action-contract-gate, planner-contract-gate, optimizer-contract-gate]
+    needs: [rust, lint, python, python_framework, action-contract-gate, planner-contract-gate, optimizer-contract-gate, calibration-contract-gate]
     runs-on: ubuntu-latest
     steps:
       - name: Enforce required jobs
@@ -207,6 +239,7 @@ jobs:
           ACTION_RESULT: ${{ needs.action-contract-gate.result }}
           PERFORMANCE_RESULT: ${{ needs.planner-contract-gate.result }}
           OPTIMIZER_PERFORMANCE_RESULT: ${{ needs.optimizer-contract-gate.result }}
+          CALIBRATION_RESULT: ${{ needs.calibration-contract-gate.result }}
         run: |
           test "$RUST_RESULT" = success
           test "$LINT_RESULT" = success
@@ -215,3 +248,4 @@ jobs:
           test "$ACTION_RESULT" = success
           test "$PERFORMANCE_RESULT" = success
           test "$OPTIMIZER_PERFORMANCE_RESULT" = success
+          test "$CALIBRATION_RESULT" = success
