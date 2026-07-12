@@ -102,7 +102,6 @@ reports = edgefit.batch(["a.onnx", "b.onnx"], "targets/device.yaml")
 plan = edgefit.optimize("model.onnx", "targets/virtual-npu.yaml")
 ```
 
-See [Python API](docs/PYTHON_API.md) for the module CLI and binding boundary.
 
 ## Use It as a Pull Request Gate
 
@@ -133,8 +132,8 @@ full commit SHA. On Linux x86_64, the Action downloads the matching release
 archive and verifies it against the published `SHA256SUMS`; it does not install
 Rust or compile EdgeFit in the caller workflow. The Action validates the target,
 runs the check, publishes the Markdown job summary, and then restores the
-EdgeFit exit status. See [GitHub Action usage](docs/GITHUB_ACTION_USAGE.md) for
-SARIF upload, suppression, and fork-PR handling.
+EdgeFit exit status. SARIF upload remains a caller-controlled step so the
+consuming repository can apply its own fork-PR permissions policy.
 
 ## What Gets Verified
 
@@ -157,15 +156,14 @@ claims:
 | `targets/ort-mobile-cpu.yaml` | ONNX Runtime Mobile CPU-like review |
 | `targets/virtual-npu.yaml` | Simulated CPU/NPU optimization seed; costs and latency are not hardware measurements |
 
-Project-specific profiles should live with the consuming repository and record their
-source, confidence, and last verification date. See
-[Target profiles](docs/TARGET_PROFILES.md).
+Project-specific profiles should live with the consuming repository and record
+their source, confidence, and last verification date.
 
 ## Hosted Evidence
 
-The normal CI gate runs Rust and ONNX adapter tests on Linux, Windows, and macOS,
-plus the composite Action smoke test and a required 10K-node Release planning
-check.
+The normal CI gate runs Rust, ONNX adapter, and Python binding tests on Linux,
+Windows, and macOS, plus Composite Action, 10K-node activation-planner, and
+optimizer pass/fail contract gates.
 
 The hosted maturity run processed deterministic linear graphs five times each:
 
@@ -190,9 +188,9 @@ profiles compute and model structure, and ORT Mobile Checker estimates execution
 provider usability.
 
 These figures are hosted end-to-end process observations, not device inference
-latency, throughput, power, firmware, or real-hardware memory measurements. See
-the [successful maturity run](https://github.com/nya-a-cat/edgefit/actions/runs/29103544134)
-and [benchmark methodology](docs/COMPETITIVE_BENCHMARK.md).
+latency, throughput, power, firmware, or real-hardware memory measurements. The
+[successful maturity run](https://github.com/nya-a-cat/edgefit/actions/runs/29103544134)
+and fixed manifests under `tools/competitive-benchmark/` retain the evidence.
 
 ## Command Surface
 
@@ -204,8 +202,8 @@ edgefit snapshot          freeze a reviewable result
 edgefit diff              block deployment regressions
 ```
 
-The compatibility policy, machine-output schemas, and exit behavior are defined
-in the [CLI contract](docs/CLI_CONTRACT.md).
+The exit codes above and `edgefit.*.v1` machine-output schemas are public
+compatibility contracts. Incompatible changes require a new schema version.
 
 ## Architecture
 
@@ -218,8 +216,7 @@ in the [CLI contract](docs/CLI_CONTRACT.md).
 - `action.yml` — Linux/bash composite Action for deployment-budget gating.
 
 The Rust workspace forbids unsafe code and currently has no external crate
-dependency. See [Architecture](docs/ARCHITECTURE.md) and
-[MVP scope](docs/MVP_SCOPE.md) for the detailed implementation boundary.
+dependency.
 
 ## Limitations
 
@@ -231,17 +228,6 @@ dependency. See [Architecture](docs/ARCHITECTURE.md) and
   runtime, power, or real-device memory compatibility.
 - Direct ONNX normalization rejects nested subgraphs, local functions, and sparse
   initializers instead of partially analyzing them.
-
-## Documentation
-
-- [CLI contract](docs/CLI_CONTRACT.md)
-- [GitHub Action usage](docs/GITHUB_ACTION_USAGE.md)
-- [Target profiles](docs/TARGET_PROFILES.md)
-- [Hardware optimizer](docs/HARDWARE_OPTIMIZER.md)
-- [Real-world ONNX corpus](docs/REAL_WORLD_CORPUS.md)
-- [Competitive benchmark](docs/COMPETITIVE_BENCHMARK.md)
-- [ESP-DL / ESP32-S3 simulated deployment](docs/SIMULATED_DEPLOYMENT.md)
-- [Publishing policy](docs/PUBLISHING.md)
 
 ## License
 
