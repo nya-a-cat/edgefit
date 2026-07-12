@@ -103,6 +103,31 @@ class BenchmarkComparisonTests(unittest.TestCase):
             all(node["op_type"] == "HardSwish" for node in data["graph"]["nodes"])
         )
 
+    def test_generated_optimizer_topologies_are_bounded_and_deterministic(self) -> None:
+        for kind in ("diamond_chain", "fanout_merge", "residual_chain"):
+            with self.subTest(kind=kind), tempfile.TemporaryDirectory() as directory:
+                spec = {
+                    "kind": kind,
+                    "node_count": 11,
+                    "tensor_elements": 16,
+                    "dtype": "int8",
+                    "op_type": "Relu",
+                }
+                first, first_path = self.benchmark.prepare_generated_model(
+                    kind, spec, Path(directory) / "first"
+                )
+                second, second_path = self.benchmark.prepare_generated_model(
+                    kind, spec, Path(directory) / "second"
+                )
+                data = self.benchmark.read_json(first_path)
+
+                self.assertEqual(first["model_sha256"], second["model_sha256"])
+                self.assertEqual(first_path.read_bytes(), second_path.read_bytes())
+                self.assertEqual(len(data["graph"]["nodes"]), 11)
+                self.assertTrue(
+                    all(node["op_type"] in {"Relu", "Add"} for node in data["graph"]["nodes"])
+                )
+
     def test_optimizer_plan_parser_and_expectations(self) -> None:
         plan = self.valid_plan()
         case = {
@@ -144,6 +169,40 @@ class BenchmarkComparisonTests(unittest.TestCase):
         self.assertEqual(observations["event_kind_counts"]["spill"], 1)
         self.assertTrue(observations["latency_improved"])
         self.assertEqual(observations["target_id"], "virtual-npu")
+
+    def test_optimizer_validation_parser_and_expectations(self) -> None:
+        report = {
+            "schema": "edgefit.optimizer_validation.v1",
+            "status": "pass",
+            "scope": "placement_under_deterministic_spill_scheduler",
+            "enumerated_plans": 4,
+            "greedy": self.valid_plan(),
+            "oracle": self.valid_plan(),
+            "quality": {
+                "blocker_delta": 0,
+                "latency_gap_ns": 0,
+                "latency_gap_ppm": 0,
+            },
+            "validation_hash": "fnv1a64:0123456789abcdef",
+        }
+        case = {
+            "id": "oracle",
+            "expectations": {
+                "expected_validation_status": "pass",
+                "require_no_missed_feasibility": True,
+                "max_validation_latency_gap_ppm": 0,
+            },
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "validation.json"
+            path.write_text(json.dumps(report), encoding="utf-8")
+            observations = self.benchmark.parse_edgefit_validation("", path)
+
+        result = self.benchmark.evaluate_case_expectations(
+            case, {"edgefit": {"observations": observations}}
+        )
+        self.assertEqual(result["status"], "pass")
+        self.assertEqual(observations["blocker_delta"], 0)
 
     def test_optimizer_plan_parser_rejects_bool_as_int(self) -> None:
         plan = self.valid_plan()

@@ -5,6 +5,7 @@
 
 #![forbid(unsafe_code)]
 
+mod capture;
 mod hash;
 mod json;
 mod render;
@@ -12,6 +13,10 @@ mod schema;
 mod simulation;
 mod verify;
 
+pub use capture::{
+    parse_capture_manifest, CaptureAttachment, CaptureIdentity, CaptureManifest,
+    CaptureMeasurements, CaptureMetadata, CAPTURE_SCHEMA,
+};
 pub use hash::sha256_hex;
 pub use render::{
     render_evidence_json, render_verification_json, render_verification_markdown,

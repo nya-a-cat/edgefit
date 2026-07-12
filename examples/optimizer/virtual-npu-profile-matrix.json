@@ -1,0 +1,22 @@
+{
+  "schema": "edgefit.optimizer_profile_matrix.v1",
+  "matrix_id": "virtual-npu-contract-range",
+  "profiles": [
+    {
+      "id": "baseline",
+      "path": "../../targets/virtual-npu.yaml"
+    },
+    {
+      "id": "small-scratchpad",
+      "path": "../../targets/virtual-npu-small-scratchpad.yaml"
+    },
+    {
+      "id": "no-spill",
+      "path": "../../targets/virtual-npu-no-spill.yaml"
+    },
+    {
+      "id": "segmented",
+      "path": "../../targets/virtual-npu-segmented.yaml"
+    }
+  ]
+}

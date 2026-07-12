@@ -62,6 +62,8 @@ jobs:
           target/release/edgefit target validate targets/esp32s3.yaml
           target/release/edgefit check examples/models/good_tiny.edgefit.json --target targets/esp32s3.yaml
           target/release/edgefit optimize examples/models/virtual_npu_tiny.edgefit.json --target targets/virtual-npu.yaml --format json --out tmp/release-optimization-plan.json
+          target/release/edgefit optimize validate examples/models/virtual_npu_tiny.edgefit.json --target targets/virtual-npu.yaml --format json --out tmp/release-optimizer-validation.json
+          target/release/edgefit optimize sweep examples/models/virtual_npu_tiny.edgefit.json --manifest examples/optimizer/virtual-npu-profile-matrix.json --format json --out tmp/release-optimizer-matrix.json
           python tools/calibration_contract_gate.py \
             --edgefit target/release/edgefit \
             --model examples/models/virtual_npu_tiny.edgefit.json \
@@ -78,6 +80,7 @@ jobs:
           mkdir -p "$package/examples/models"
           cp examples/models/good_tiny.edgefit.json examples/models/virtual_npu_tiny.edgefit.json "$package/examples/models/"
           cp -R examples/calibration "$package/examples/calibration"
+          cp -R examples/optimizer "$package/examples/optimizer"
           tar -czf "$package.tar.gz" "$package"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -104,6 +107,8 @@ jobs:
           target/release/edgefit.exe target validate targets/esp32s3.yaml
           target/release/edgefit.exe check examples/models/good_tiny.edgefit.json --target targets/esp32s3.yaml
           target/release/edgefit.exe optimize examples/models/virtual_npu_tiny.edgefit.json --target targets/virtual-npu.yaml --format json --out tmp/release-optimization-plan.json
+          target/release/edgefit.exe optimize validate examples/models/virtual_npu_tiny.edgefit.json --target targets/virtual-npu.yaml --format json --out tmp/release-optimizer-validation.json
+          target/release/edgefit.exe optimize sweep examples/models/virtual_npu_tiny.edgefit.json --manifest examples/optimizer/virtual-npu-profile-matrix.json --format json --out tmp/release-optimizer-matrix.json
           python tools/calibration_contract_gate.py --edgefit target/release/edgefit.exe --model examples/models/virtual_npu_tiny.edgefit.json --target targets/virtual-npu.yaml --out-dir tmp/release-calibration-acceptance
       - name: Package
         shell: pwsh
@@ -116,8 +121,10 @@ jobs:
           Copy-Item targets -Destination "$package/targets" -Recurse
           New-Item -ItemType Directory -Path "$package/examples/models" -Force | Out-Null
           New-Item -ItemType Directory -Path "$package/examples/calibration" -Force | Out-Null
+          New-Item -ItemType Directory -Path "$package/examples/optimizer" -Force | Out-Null
           Copy-Item examples/models/good_tiny.edgefit.json, examples/models/virtual_npu_tiny.edgefit.json -Destination "$package/examples/models"
-          Copy-Item examples/calibration/*.json -Destination "$package/examples/calibration"
+          Copy-Item examples/calibration/* -Destination "$package/examples/calibration" -Recurse
+          Copy-Item examples/optimizer/* -Destination "$package/examples/optimizer" -Recurse
           Compress-Archive -Path $package -DestinationPath "$package.zip"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -151,6 +158,8 @@ jobs:
           target/universal2/release/edgefit target validate targets/esp32s3.yaml
           target/universal2/release/edgefit check examples/models/good_tiny.edgefit.json --target targets/esp32s3.yaml
           target/universal2/release/edgefit optimize examples/models/virtual_npu_tiny.edgefit.json --target targets/virtual-npu.yaml --format json --out tmp/release-optimization-plan.json
+          target/universal2/release/edgefit optimize validate examples/models/virtual_npu_tiny.edgefit.json --target targets/virtual-npu.yaml --format json --out tmp/release-optimizer-validation.json
+          target/universal2/release/edgefit optimize sweep examples/models/virtual_npu_tiny.edgefit.json --manifest examples/optimizer/virtual-npu-profile-matrix.json --format json --out tmp/release-optimizer-matrix.json
           python tools/calibration_contract_gate.py \
             --edgefit target/universal2/release/edgefit \
             --model examples/models/virtual_npu_tiny.edgefit.json \
@@ -167,6 +176,7 @@ jobs:
           mkdir -p "$package/examples/models"
           cp examples/models/good_tiny.edgefit.json examples/models/virtual_npu_tiny.edgefit.json "$package/examples/models/"
           cp -R examples/calibration "$package/examples/calibration"
+          cp -R examples/optimizer "$package/examples/optimizer"
           tar -czf "$package.tar.gz" "$package"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -225,6 +235,13 @@ jobs:
               raise SystemExit(f"installed edgefit version {actual} != {expected}")
           PY
           python -m edgefit optimize examples/models/virtual_npu_tiny.edgefit.json --target targets/virtual-npu.yaml --format json
+          python -m edgefit optimize validate examples/models/virtual_npu_tiny.edgefit.json --target targets/virtual-npu.yaml --format json
+          python -m edgefit optimize sweep examples/models/virtual_npu_tiny.edgefit.json --manifest examples/optimizer/virtual-npu-profile-matrix.json --format json
+          python -m edgefit calibration pack \
+            examples/calibration/external-capture.example.json \
+            --model examples/models/virtual_npu_tiny.edgefit.json \
+            --target targets/virtual-npu.yaml \
+            --out-dir tmp/python-release-pack
           python -m edgefit calibration simulate \
             examples/models/virtual_npu_tiny.edgefit.json \
             --target targets/virtual-npu.yaml \
@@ -252,6 +269,9 @@ jobs:
           for name in simulator-runtime.bin simulation-trace.json evidence.json verification.json verification.md; do
             test -f "tmp/python-release-nominal/$name"
             test -f "tmp/python-release-latency-fail/$name"
+          done
+          for name in capture.json external-runtime.example.bin external-runtime.example.log evidence.json verification.json verification.md; do
+            test -f "tmp/python-release-pack/$name"
           done
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -299,6 +319,10 @@ jobs:
               "examples/calibration/nominal.simulation.json",
               "examples/calibration/latency-fail.simulation.json",
               "examples/calibration/arena-fail.simulation.json",
+              "examples/calibration/external-capture.example.json",
+              "examples/calibration/external-runtime.example.bin",
+              "examples/calibration/external-runtime.example.log",
+              "examples/optimizer/virtual-npu-profile-matrix.json",
           }
           for archive in archives:
               if version not in archive.name:

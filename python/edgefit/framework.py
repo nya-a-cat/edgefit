@@ -107,6 +107,64 @@ def render_optimization(
         raise EdgeFitError(str(exc)) from exc
 
 
+def validate_optimization(
+    model: str | Path,
+    target: str | Path | TargetProfileSource,
+) -> dict[str, object]:
+    """使用有界 placement oracle 验证贪婪计划，不执行模型。"""
+    return json.loads(render_optimization_validation(model, target))
+
+
+def render_optimization_validation(
+    model: str | Path,
+    target: str | Path | TargetProfileSource,
+    *,
+    format: str = "json",
+) -> str:
+    if format not in {"json", "markdown"}:
+        raise EdgeFitError("optimizer validation format must be json or markdown")
+    prepared = _prepare_model(Path(model))
+    profile = target if isinstance(target, TargetProfileSource) else load_profile(target)
+    try:
+        return _native.validate_optimization(
+            prepared.text,
+            profile.text,
+            str(profile.path),
+            format,
+            prepared.adapter_generated,
+        )
+    except ValueError as exc:
+        raise EdgeFitError(str(exc)) from exc
+
+
+def optimize_sweep(
+    model: str | Path,
+    manifest: str | Path,
+) -> dict[str, object]:
+    """对 manifest 声明的完整 target profiles 运行确定性鲁棒性矩阵。"""
+    return json.loads(render_optimization_sweep(model, manifest))
+
+
+def render_optimization_sweep(
+    model: str | Path,
+    manifest: str | Path,
+    *,
+    format: str = "json",
+) -> str:
+    if format not in {"json", "markdown"}:
+        raise EdgeFitError("optimizer sweep format must be json or markdown")
+    prepared = _prepare_model(Path(model))
+    try:
+        return _native.optimize_sweep(
+            prepared.text,
+            prepared.adapter_generated,
+            str(Path(manifest)),
+            format,
+        )
+    except ValueError as exc:
+        raise EdgeFitError(str(exc)) from exc
+
+
 def verify_calibration(
     evidence: str | Path,
     model: str | Path,
@@ -136,6 +194,34 @@ def simulate_calibration(
     """生成明确标记为 simulated 的确定性 Calibration v1 证据目录。"""
     _, rendered = _run_calibration_simulation(model, target, scenario, out_dir)
     return json.loads(rendered)
+
+
+def pack_calibration(
+    capture: str | Path,
+    model: str | Path,
+    target: str | Path,
+    out_dir: str | Path,
+) -> dict[str, object]:
+    """将外部原始测量打包为 hash-bound Calibration v1 证据目录。"""
+    _, rendered = _run_calibration_pack(capture, model, target, out_dir)
+    return json.loads(rendered)
+
+
+def _run_calibration_pack(
+    capture: str | Path,
+    model: str | Path,
+    target: str | Path,
+    out_dir: str | Path,
+) -> tuple[str, str]:
+    try:
+        return _native.pack_calibration(
+            str(Path(capture)),
+            str(Path(model)),
+            str(Path(target)),
+            str(Path(out_dir)),
+        )
+    except ValueError as exc:
+        raise EdgeFitError(str(exc)) from exc
 
 
 def _run_calibration_simulation(

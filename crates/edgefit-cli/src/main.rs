@@ -3,10 +3,12 @@ mod calibration;
 use edgefit_core::{
     check_adapter_generated_model_with_suppressions, check_model,
     check_model_with_suppressions, optimize_adapter_generated_model, optimize_model,
+    optimize_matrix_files, render_optimization_matrix,
+    validate_adapter_generated_optimization_model, validate_optimization_model,
 };
 use edgefit_diff::{diff_snapshots, load_snapshot, render_diff};
 use edgefit_report::{render_report, render_snapshot, Report};
-use edgefit_optimize::render_plan;
+use edgefit_optimize::{render_plan, render_validation};
 use edgefit_target::load_profile;
 use std::env;
 use std::fs;
@@ -58,6 +60,12 @@ fn run(args: Vec<String>) -> Result<i32, String> {
 }
 
 fn run_optimize(args: &[String]) -> Result<i32, String> {
+    if args.first().is_some_and(|argument| argument == "validate") {
+        return run_optimize_validate(&args[1..]);
+    }
+    if args.first().is_some_and(|argument| argument == "sweep") {
+        return run_optimize_sweep(&args[1..]);
+    }
     let mut normalized_args = args.to_vec();
     if !args.iter().any(|argument| argument == "--format") {
         normalized_args.extend(["--format".to_string(), "json".to_string()]);
@@ -85,6 +93,124 @@ fn run_optimize(args: &[String]) -> Result<i32, String> {
     };
     write_or_print(&render_plan(&plan, &parsed.format), parsed.out.as_deref())?;
     Ok(if plan.status == "fail" { EXIT_POLICY_FAIL } else { EXIT_PASS })
+}
+
+#[derive(Debug)]
+struct OptimizationSweepCommand {
+    model: String,
+    manifest: PathBuf,
+    format: String,
+    out: Option<String>,
+}
+
+fn run_optimize_sweep(args: &[String]) -> Result<i32, String> {
+    let parsed = parse_optimize_sweep(args)?;
+    let execution = ModelCommand {
+        model: parsed.model.clone(),
+        target: None,
+        format: parsed.format.clone(),
+        out: parsed.out.clone(),
+        summary: None,
+        suppressions: Vec::new(),
+    };
+    let prepared = match prepare_model(&parsed.model) {
+        Ok(prepared) => prepared,
+        Err(error) => return fail_with_execution_artifacts("optimize sweep", &execution, &error),
+    };
+    let matrix = match optimize_matrix_files(
+        &prepared.path,
+        prepared.cli_adapter_output,
+        &parsed.manifest,
+    ) {
+        Ok(matrix) => matrix,
+        Err(error) => return fail_with_execution_artifacts("optimize sweep", &execution, &error),
+    };
+    write_or_print(
+        &render_optimization_matrix(&matrix, &parsed.format),
+        parsed.out.as_deref(),
+    )?;
+    Ok(if matrix.status == "fail" {
+        EXIT_POLICY_FAIL
+    } else {
+        EXIT_PASS
+    })
+}
+
+fn parse_optimize_sweep(args: &[String]) -> Result<OptimizationSweepCommand, String> {
+    if args.is_empty() {
+        return Err("usage: edgefit optimize sweep <model> --manifest <profile-matrix.json> [--format json|markdown] [--out path]".to_string());
+    }
+    let model = args[0].clone();
+    let mut manifest = None;
+    let mut format = None;
+    let mut out = None;
+    let mut index = 1;
+    while index < args.len() {
+        let flag = args[index].as_str();
+        index += 1;
+        let value = args
+            .get(index)
+            .ok_or_else(|| format!("{flag} requires a value"))?;
+        match flag {
+            "--manifest" if manifest.is_none() => manifest = Some(PathBuf::from(value)),
+            "--format" if format.is_none() => format = Some(value.clone()),
+            "--out" if out.is_none() => out = Some(value.clone()),
+            "--manifest" | "--format" | "--out" => {
+                return Err(format!("duplicate optimize sweep option {flag}"));
+            }
+            other => return Err(format!("unexpected optimize sweep argument {other}")),
+        }
+        index += 1;
+    }
+    let format = format.unwrap_or_else(|| "json".to_string());
+    if !matches!(format.as_str(), "json" | "markdown") {
+        return Err("optimize sweep --format must be json or markdown".to_string());
+    }
+    Ok(OptimizationSweepCommand {
+        model,
+        manifest: manifest.ok_or("optimize sweep --manifest is required")?,
+        format,
+        out,
+    })
+}
+
+fn run_optimize_validate(args: &[String]) -> Result<i32, String> {
+    let mut normalized_args = args.to_vec();
+    if !args.iter().any(|argument| argument == "--format") {
+        normalized_args.extend(["--format".to_string(), "json".to_string()]);
+    }
+    let parsed = parse_model_command(&normalized_args, false)?;
+    if !matches!(parsed.format.as_str(), "json" | "markdown") {
+        return Err("optimize validate --format must be json or markdown".to_string());
+    }
+    if !parsed.suppressions.is_empty() || parsed.summary.is_some() {
+        return Err("optimize validate does not accept --suppress or --summary".to_string());
+    }
+    let target = parsed.target.as_deref().ok_or("--target is required")?;
+    let prepared = match prepare_model(&parsed.model) {
+        Ok(prepared) => prepared,
+        Err(error) => return fail_with_execution_artifacts("optimize validate", &parsed, &error),
+    };
+    let result = if prepared.cli_adapter_output {
+        validate_adapter_generated_optimization_model(&prepared.path, target)
+    } else {
+        validate_optimization_model(&prepared.path, target)
+    };
+    let validation = match result {
+        Ok(validation) => validation,
+        Err(error) => {
+            return fail_with_execution_artifacts("optimize validate", &parsed, &error)
+        }
+    };
+    write_or_print(
+        &render_validation(&validation, &parsed.format),
+        parsed.out.as_deref(),
+    )?;
+    Ok(if validation.status == "fail" {
+        EXIT_POLICY_FAIL
+    } else {
+        EXIT_PASS
+    })
 }
 
 fn run_target(args: &[String]) -> Result<i32, String> {
@@ -473,8 +599,11 @@ fn print_help() {
     println!("  target validate <profile>");
     println!("  calibration verify <evidence.json> --model <model> --target <profile> [--format json|markdown] [--out path]");
     println!("  calibration simulate <model.onnx|model.edgefit.json> --target <profile> --scenario <scenario.json> --out-dir <new-directory>");
+    println!("  calibration pack <capture.json> --model <model> --target <profile> --out-dir <new-directory>");
     println!("  check <model.onnx|model.edgefit.json> --target <profile> [--format text|json|markdown|sarif] [--out path] [--summary path] [--suppress id[,id]]");
     println!("  optimize <model.onnx|model.edgefit.json> --target <profile> [--format json|markdown] [--out path]");
+    println!("  optimize validate <model.onnx|model.edgefit.json> --target <profile> [--format json|markdown] [--out path]");
+    println!("  optimize sweep <model.onnx|model.edgefit.json> --manifest <profile-matrix.json> [--format json|markdown] [--out path]");
     println!("  snapshot <model.onnx|model.edgefit.json> --target <profile> --out path");
     println!("  diff --old path --new path [--format markdown|json] [--out path]");
 }

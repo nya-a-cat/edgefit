@@ -9,11 +9,16 @@ from pathlib import Path
 from .framework import (
     EdgeFitError,
     _run_calibration,
+    _run_calibration_pack,
     _run_calibration_simulation,
     check,
     optimize,
+    optimize_sweep,
     render,
     render_optimization,
+    render_optimization_validation,
+    render_optimization_sweep,
+    validate_optimization,
 )
 
 
@@ -27,8 +32,10 @@ def main() -> int:
     command.add_argument("--out")
     command.add_argument("--suppress", action="append", default=[])
     optimize_command = subcommands.add_parser("optimize")
-    optimize_command.add_argument("model")
-    optimize_command.add_argument("--target", required=True)
+    optimize_command.add_argument("model_or_command")
+    optimize_command.add_argument("validation_model", nargs="?")
+    optimize_command.add_argument("--target")
+    optimize_command.add_argument("--manifest")
     optimize_command.add_argument("--format", choices=["json", "markdown"], default="json")
     optimize_command.add_argument("--out")
     calibration_command = subcommands.add_parser("calibration")
@@ -46,6 +53,11 @@ def main() -> int:
     simulate_command.add_argument("--target", required=True)
     simulate_command.add_argument("--scenario", required=True)
     simulate_command.add_argument("--out-dir", required=True)
+    pack_command = calibration_subcommands.add_parser("pack")
+    pack_command.add_argument("capture")
+    pack_command.add_argument("--model", required=True)
+    pack_command.add_argument("--target", required=True)
+    pack_command.add_argument("--out-dir", required=True)
     args = parser.parse_args()
 
     try:
@@ -57,6 +69,13 @@ def main() -> int:
                     args.scenario,
                     args.out_dir,
                 )
+            elif args.calibration_command == "pack":
+                status, output = _run_calibration_pack(
+                    args.capture,
+                    args.model,
+                    args.target,
+                    args.out_dir,
+                )
             else:
                 status, output = _run_calibration(
                     args.evidence,
@@ -66,8 +85,45 @@ def main() -> int:
                 )
             report = {"status": status}
         elif args.command == "optimize":
-            report = optimize(args.model, args.target)
-            output = render_optimization(args.model, args.target, format=args.format)
+            if args.model_or_command == "sweep":
+                if not args.validation_model:
+                    parser.error("optimize sweep requires a model")
+                if not args.manifest:
+                    parser.error("optimize sweep requires --manifest")
+                if args.target:
+                    parser.error("optimize sweep does not accept --target")
+                report = optimize_sweep(args.validation_model, args.manifest)
+                output = render_optimization_sweep(
+                    args.validation_model,
+                    args.manifest,
+                    format=args.format,
+                )
+            elif args.model_or_command == "validate":
+                if not args.validation_model:
+                    parser.error("optimize validate requires a model")
+                if not args.target:
+                    parser.error("optimize validate requires --target")
+                if args.manifest:
+                    parser.error("optimize validate does not accept --manifest")
+                report = validate_optimization(args.validation_model, args.target)
+                output = render_optimization_validation(
+                    args.validation_model,
+                    args.target,
+                    format=args.format,
+                )
+            else:
+                if args.validation_model:
+                    parser.error("optimize accepts only one model")
+                if not args.target:
+                    parser.error("optimize requires --target")
+                if args.manifest:
+                    parser.error("optimize does not accept --manifest")
+                report = optimize(args.model_or_command, args.target)
+                output = render_optimization(
+                    args.model_or_command,
+                    args.target,
+                    format=args.format,
+                )
         else:
             report = check(args.model, args.target, suppress=args.suppress)
             output = render(args.model, args.target, format=args.format, suppress=args.suppress)

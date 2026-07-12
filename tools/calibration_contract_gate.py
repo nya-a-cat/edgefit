@@ -1,4 +1,4 @@
-"""调度正式 Calibration 模拟器并核对确定性、失败和篡改契约。"""
+"""调度 Calibration 模拟器与外部证据打包器，核对失败、绑定和篡改契约。"""
 
 from __future__ import annotations
 
@@ -13,6 +13,14 @@ ROOT = Path(__file__).resolve().parents[1]
 OUTPUT_FILES = (
     "simulator-runtime.bin",
     "simulation-trace.json",
+    "evidence.json",
+    "verification.json",
+    "verification.md",
+)
+PACK_FILES = (
+    "capture.json",
+    "external-runtime.example.bin",
+    "external-runtime.example.log",
     "evidence.json",
     "verification.json",
     "verification.md",
@@ -76,6 +84,31 @@ def verify(
             "json",
             "--out",
             str(out),
+        ],
+        expected,
+    )
+
+
+def pack(
+    edgefit: Path,
+    capture: Path,
+    model: Path,
+    target: Path,
+    out_dir: Path,
+    expected: int,
+) -> subprocess.CompletedProcess[str]:
+    return run(
+        [
+            str(edgefit),
+            "calibration",
+            "pack",
+            str(capture),
+            "--model",
+            str(model),
+            "--target",
+            str(target),
+            "--out-dir",
+            str(out_dir),
         ],
         expected,
     )
@@ -277,6 +310,96 @@ def main() -> int:
     )
     if "model SHA-256 binding mismatch" not in binding_mismatch.stderr:
         raise RuntimeError("model binding mismatch was not reported")
+
+    capture_fixture = scenarios / "external-capture.example.json"
+    packed = args.out_dir / "external-pack"
+    packed_result = pack(
+        args.edgefit,
+        capture_fixture,
+        args.model,
+        args.target,
+        packed,
+        0,
+    )
+    for name in PACK_FILES:
+        if not (packed / name).is_file():
+            raise RuntimeError(f"calibration pack is missing {name}")
+    packed_verification = json.loads((packed / "verification.json").read_text(encoding="utf-8"))
+    packed_evidence = json.loads((packed / "evidence.json").read_text(encoding="utf-8"))
+    if packed_result.stdout != (packed / "verification.json").read_text(encoding="utf-8"):
+        raise RuntimeError("calibration pack stdout is not canonical verification JSON")
+    if packed_verification.get("status") != "pass":
+        raise RuntimeError("calibration pack fixture did not pass")
+    if packed_evidence.get("attestation", {}).get("kind") != "none":
+        raise RuntimeError("calibration pack unexpectedly claims attestation")
+    if {item["name"] for item in packed_evidence.get("attachments", [])} != {
+        "capture-manifest",
+        "runtime-binary",
+        "raw-log",
+    }:
+        raise RuntimeError("calibration pack attachment bindings are incomplete")
+    existing_pack = pack(
+        args.edgefit,
+        capture_fixture,
+        args.model,
+        args.target,
+        packed,
+        2,
+    )
+    if "already exists" not in existing_pack.stderr:
+        raise RuntimeError("existing calibration pack directory was not rejected")
+
+    tampered_pack = args.out_dir / "tampered-pack"
+    shutil.copytree(packed, tampered_pack)
+    (tampered_pack / "external-runtime.example.log").write_text(
+        "tampered\n", encoding="utf-8"
+    )
+    tampered_pack_result = verify(
+        args.edgefit,
+        tampered_pack / "evidence.json",
+        args.model,
+        args.target,
+        args.out_dir / "tampered-pack-verification.json",
+        2,
+    )
+    if "external-runtime.example.log" not in tampered_pack_result.stderr:
+        raise RuntimeError("tampered external attachment was not rejected")
+
+    failing_source = args.out_dir / "capture-threshold-fixture"
+    failing_source.mkdir()
+    shutil.copy2(scenarios / "external-runtime.example.bin", failing_source)
+    shutil.copy2(scenarios / "external-runtime.example.log", failing_source)
+    failing_capture = json.loads(capture_fixture.read_text(encoding="utf-8"))
+    failing_capture["thresholds"]["p95_latency_budget_ns"] = "7000"
+    failing_capture_path = failing_source / "capture.json"
+    failing_capture_path.write_text(
+        json.dumps(failing_capture, indent=2) + "\n", encoding="utf-8"
+    )
+    failing_pack = args.out_dir / "external-pack-threshold-fail"
+    pack(
+        args.edgefit,
+        failing_capture_path,
+        args.model,
+        args.target,
+        failing_pack,
+        1,
+    )
+    require_failed_check(failing_pack, "evidence_latency_threshold")
+
+    unsafe_capture = json.loads(capture_fixture.read_text(encoding="utf-8"))
+    unsafe_capture["runtime_binary"] = "../external-runtime.example.bin"
+    unsafe_path = failing_source / "unsafe-capture.json"
+    unsafe_path.write_text(json.dumps(unsafe_capture) + "\n", encoding="utf-8")
+    unsafe_result = pack(
+        args.edgefit,
+        unsafe_path,
+        args.model,
+        args.target,
+        args.out_dir / "unsafe-pack",
+        2,
+    )
+    if "unsafe attachment path" not in unsafe_result.stderr:
+        raise RuntimeError("capture directory traversal was not rejected")
     return 0
 
 

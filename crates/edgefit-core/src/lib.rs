@@ -1,9 +1,15 @@
 use edgefit_analyze::analyze;
 mod calibration;
+mod optimization_matrix;
 
 pub use calibration::{
-    render_calibration_files, render_calibration_files_with_status, simulate_calibration_files,
-    simulate_calibration_text, verify_calibration_files, CalibrationSimulationResult,
+    pack_calibration_files, render_calibration_files, render_calibration_files_with_status,
+    simulate_calibration_files, simulate_calibration_text, verify_calibration_files,
+    CalibrationPackResult, CalibrationSimulationResult,
+};
+pub use optimization_matrix::{
+    optimize_matrix_files, optimize_matrix_text, render_optimization_matrix, OptimizationMatrix,
+    OptimizationMatrixCase,
 };
 
 use edgefit_ir::{
@@ -11,7 +17,10 @@ use edgefit_ir::{
     parse_normalized_model, EdgeFitResult, NormalizedModel,
 };
 use edgefit_policy::{evaluate, suppress_diagnostics};
-use edgefit_optimize::{optimize, render_plan, OptimizationPlan};
+use edgefit_optimize::{
+    optimize, render_plan, render_validation, validate_optimization, OptimizationPlan,
+    OptimizationValidation,
+};
 use edgefit_report::{build_report, render_report, Report};
 use edgefit_target::{load_profile, parse_profile, TargetProfile};
 use std::path::{Path, PathBuf};
@@ -116,6 +125,25 @@ pub fn optimize_adapter_generated_model(
     optimize(&load_cli_adapter_output(model_path)?, &load_profile(target_path)?)
 }
 
+/// 对小型规范化模型运行有界 placement oracle，并返回可审计差距。
+pub fn validate_optimization_model(
+    model_path: impl AsRef<Path>,
+    target_path: impl AsRef<Path>,
+) -> EdgeFitResult<OptimizationValidation> {
+    validate_optimization(&load_normalized_model(model_path)?, &load_profile(target_path)?)
+}
+
+/// 对 CLI 从 ONNX 生成的可信规范化结果运行有界 placement oracle。
+pub fn validate_adapter_generated_optimization_model(
+    model_path: impl AsRef<Path>,
+    target_path: impl AsRef<Path>,
+) -> EdgeFitResult<OptimizationValidation> {
+    validate_optimization(
+        &load_cli_adapter_output(model_path)?,
+        &load_profile(target_path)?,
+    )
+}
+
 /// 为内存中的规范化模型与 target profile 生成 typed canonical 优化计划。
 pub fn optimize_normalized_text(
     model_text: &str,
@@ -147,6 +175,26 @@ pub fn render_optimization_text(
     }
     let plan = optimize_text(model_text, target_text, target_source, adapter_generated)?;
     Ok(render_plan(&plan, format))
+}
+
+/// 为 Python 与 CLI 生成 canonical optimizer validation 伴随报告。
+pub fn render_optimization_validation_text(
+    model_text: &str,
+    target_text: &str,
+    target_source: &str,
+    format: &str,
+    adapter_generated: bool,
+) -> EdgeFitResult<String> {
+    if !matches!(format, "json" | "markdown") {
+        return Err("optimizer validation format must be json or markdown".to_string());
+    }
+    let model = if adapter_generated {
+        parse_cli_adapter_output(model_text)?
+    } else {
+        parse_normalized_model(model_text)?
+    };
+    let validation = validate_optimization(&model, &parse_target_text(target_text, target_source)?)?;
+    Ok(render_validation(&validation, format))
 }
 
 fn optimize_text(

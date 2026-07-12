@@ -83,12 +83,12 @@ not depend on Python packages.
 
 Prebuilt Python 3.10+ wheels for Linux x86_64, Windows x86_64, and macOS
 universal2 are attached to the
-[`v0.4.0-alpha.1` GitHub Release](https://github.com/nya-a-cat/edgefit/releases/tag/v0.4.0-alpha.1).
+[`v0.5.0-alpha.1` GitHub Release](https://github.com/nya-a-cat/edgefit/releases/tag/v0.5.0-alpha.1).
 Download the wheel matching the current platform, verify it with the release
 `SHA256SUMS`, and install that local file; EdgeFit is not published on PyPI:
 
 ```bash
-python -m pip install ./edgefit-0.4.0a1-cp310-abi3-<platform>.whl
+python -m pip install ./edgefit-0.5.0a1-cp310-abi3-<platform>.whl
 ```
 
 The package uses a prebuilt PyO3 extension over the same Rust engine. It does
@@ -100,6 +100,9 @@ import edgefit
 report = edgefit.check("model.onnx", "targets/device.yaml")
 reports = edgefit.batch(["a.onnx", "b.onnx"], "targets/device.yaml")
 plan = edgefit.optimize("model.onnx", "targets/virtual-npu.yaml")
+validation = edgefit.validate_optimization(
+    "model.onnx", "targets/virtual-npu.yaml"
+)
 ```
 
 ### Deterministic calibration simulation
@@ -129,6 +132,51 @@ latency, or authority to modify a target profile.
 `simulator-runtime.bin`, `simulation-trace.json`, `evidence.json`,
 `verification.json`, and `verification.md`.
 
+### Optimizer validation and profile sweep
+
+For models with at most 14 nodes, the bounded oracle enumerates eligible CPU,
+direct-NPU, and trusted-recipe placements and compares them with the normal
+greedy plan under the same deterministic spill scheduler:
+
+```bash
+./target/release/edgefit optimize validate \
+  examples/models/virtual_npu_tiny.edgefit.json \
+  --target targets/virtual-npu.yaml \
+  --format json
+```
+
+The profile sweep runs the unchanged model against complete profiles declared
+by a manifest and classifies the result as `robust_pass`, `fragile`, or
+`robust_fail`:
+
+```bash
+./target/release/edgefit optimize sweep \
+  examples/models/virtual_npu_tiny.edgefit.json \
+  --manifest examples/optimizer/virtual-npu-profile-matrix.json \
+  --format json
+```
+
+Both commands report profile-driven simulation evidence. They do not execute
+the model or establish real-hardware latency.
+
+### Pack external calibration evidence
+
+An external runner can record raw measurements and attachment paths in an
+`edgefit.calibration_capture.v1` manifest. EdgeFit derives all hashes, copies
+the declared raw files without changing their paths, emits Calibration v1
+evidence, and immediately verifies the completed new directory:
+
+```bash
+./target/release/edgefit calibration pack \
+  examples/calibration/external-capture.example.json \
+  --model examples/models/virtual_npu_tiny.edgefit.json \
+  --target targets/virtual-npu.yaml \
+  --out-dir edgefit-calibration-pack
+```
+
+The packer records hash integrity with `attestation: none`; it does not certify
+device identity or measurement authenticity.
+
 
 ## Use It as a Pull Request Gate
 
@@ -145,7 +193,7 @@ jobs:
       security-events: write
     steps:
       - uses: actions/checkout@v7
-      - uses: nya-a-cat/edgefit@v0.4.0-alpha.1
+      - uses: nya-a-cat/edgefit@v0.5.0-alpha.1
         with:
           model: models/model.onnx
           target: targets/device.yaml
@@ -153,7 +201,7 @@ jobs:
           summary: edgefit-summary.md
 ```
 
-`v0.4.0-alpha.1` is a prerelease intended for reproducible evaluation. Until a
+`v0.5.0-alpha.1` is a prerelease intended for reproducible evaluation. Until a
 stable tag is published, pin long-lived or production workflows to a reviewed
 full commit SHA. On Linux x86_64, the Action downloads the matching release
 archive and verifies it against the published `SHA256SUMS`; it does not install
@@ -189,8 +237,8 @@ their source, confidence, and last verification date.
 ## Hosted Evidence
 
 The normal CI gate runs Rust, ONNX adapter, and Python binding tests on Linux,
-Windows, and macOS, plus Composite Action, 10K-node activation-planner,
-optimizer, and deterministic calibration-simulation contract gates.
+Windows, and macOS, plus Composite Action, activation-planner, multi-topology
+optimizer, bounded-oracle, calibration-simulation, and external-pack contracts.
 
 The hosted maturity run processed deterministic linear graphs five times each:
 
@@ -224,8 +272,11 @@ and fixed manifests under `tools/competitive-benchmark/` retain the evidence.
 ```text
 edgefit check             verify a model against a target
 edgefit optimize          estimate and partition an accelerator execution plan
+edgefit optimize validate compare the greedy plan with a bounded placement oracle
+edgefit optimize sweep    run one model across a declared profile matrix
 edgefit calibration verify    verify hash-bound Calibration v1 evidence
 edgefit calibration simulate  generate controlled simulated evidence
+edgefit calibration pack      bind external capture files into verified evidence
 edgefit target validate   validate a target profile
 edgefit snapshot          freeze a reviewable result
 edgefit diff              block deployment regressions
@@ -253,9 +304,12 @@ dependency.
 - Checked-in targets are seed profiles and require project-specific validation;
   `targets/virtual-npu.yaml` is explicitly simulated.
 - Hosted timings measure complete CLI processes, not device inference.
-- Optimizer latency is derived from profile costs, not measured on hardware.
+- Optimizer, oracle, and profile-sweep latency is derived from profile costs,
+  not measured on hardware.
 - Calibration simulation applies controlled perturbations to static estimates;
   it is not empirical calibration or device evidence.
+- Calibration packs provide file integrity, not signatures, device attestation,
+  or proof that the measurements came from the declared hardware.
 - Passing verification or optimization planning does not establish firmware,
   runtime, power, or real-device memory compatibility.
 - Direct ONNX normalization rejects nested subgraphs, local functions, and sparse
