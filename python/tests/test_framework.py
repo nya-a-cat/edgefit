@@ -56,6 +56,38 @@ class FrameworkTests(unittest.TestCase):
         self.assertEqual(python_plan["status"], "pass")
         self.assertEqual(len(python_plan["segments"]), 1)
 
+    def test_failed_optimization_plan_matches_rust_cli(self) -> None:
+        model = ROOT / "examples/models/virtual_npu_spill.edgefit.json"
+        target = ROOT / "targets/virtual-npu-no-spill.yaml"
+        python_plan = edgefit.optimize(model, target)
+
+        binary = ROOT / "target/debug" / ("edgefit.exe" if os.name == "nt" else "edgefit")
+        completed = subprocess.run(
+            [str(binary), "optimize", str(model), "--target", str(target), "--format", "json"],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(completed.returncode, 1, completed.stderr)
+        self.assertEqual(python_plan, json.loads(completed.stdout))
+        self.assertEqual(python_plan["schema"], "edgefit.optimization_plan.v1")
+        self.assertEqual(python_plan["status"], "fail")
+
+    def test_optimization_rejects_invalid_format_and_target(self) -> None:
+        model = ROOT / "examples/models/virtual_npu_tiny.edgefit.json"
+        target = ROOT / "targets/virtual-npu.yaml"
+        with self.assertRaisesRegex(edgefit.EdgeFitError, "json or markdown"):
+            edgefit.render_optimization(model, target, format="text")
+
+        valid_target = edgefit.load_profile(target)
+        invalid_target = type(valid_target)(
+            path=Path("invalid-target.yaml"),
+            text=valid_target.text.replace("  id: generic-npu-v1\n", ""),
+            target_id=valid_target.target_id,
+        )
+        with self.assertRaisesRegex(edgefit.EdgeFitError, "accelerator.id"):
+            edgefit.optimize(model, invalid_target)
+
 
 if __name__ == "__main__":
     unittest.main()

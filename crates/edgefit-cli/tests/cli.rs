@@ -75,6 +75,82 @@ fn optimize_emits_a_machine_readable_plan() {
     parse_json(&json).expect("parse optimization plan");
 }
 
+#[test]
+fn optimize_no_spill_failure_is_a_canonical_plan() {
+    let output = run(&[
+        "optimize",
+        &fixture("examples/models/virtual_npu_spill.edgefit.json"),
+        "--target",
+        &fixture("targets/virtual-npu-no-spill.yaml"),
+        "--format",
+        "json",
+    ]);
+
+    assert_eq!(output.status.code(), Some(1));
+    let json = String::from_utf8_lossy(&output.stdout);
+    assert!(json.contains("\"schema\": \"edgefit.optimization_plan.v1\""));
+    assert!(json.contains("\"status\": \"fail\""));
+    assert!(!json.contains("edgefit.execution_error.v1"));
+    parse_json(&json).expect("parse failed optimization plan");
+}
+
+#[test]
+fn optimize_execution_failures_overwrite_stale_artifacts() {
+    let dir = unique_dir("optimize-execution-errors");
+    let stale = "stale optimization plan";
+    let partial_accelerator = dir.join("partial-accelerator.yaml");
+    let profile = fs::read_to_string(fixture("targets/virtual-npu.yaml"))
+        .expect("read accelerator profile")
+        .replace("  id: generic-npu-v1\n", "");
+    fs::write(&partial_accelerator, profile).expect("write invalid accelerator profile");
+    let cases = [
+        (
+            "model",
+            dir.join("missing-model.json"),
+            PathBuf::from(fixture("targets/virtual-npu.yaml")),
+        ),
+        (
+            "profile",
+            PathBuf::from(fixture("examples/models/virtual_npu_tiny.edgefit.json")),
+            partial_accelerator,
+        ),
+        (
+            "planner",
+            PathBuf::from(fixture("examples/models/virtual_npu_tiny.edgefit.json")),
+            PathBuf::from(fixture("targets/esp32s3.yaml")),
+        ),
+    ];
+
+    for (name, model, target) in cases {
+        let format = if name == "profile" { "markdown" } else { "json" };
+        let artifact = dir.join(format!("{name}.{format}"));
+        fs::write(&artifact, stale).expect("write stale artifact");
+        let output = run(&[
+            "optimize",
+            model.to_str().expect("model path"),
+            "--target",
+            target.to_str().expect("target path"),
+            "--format",
+            format,
+            "--out",
+            artifact.to_str().expect("artifact path"),
+        ]);
+
+        assert_eq!(output.status.code(), Some(2), "case {name}/{format}");
+        let contents = fs::read_to_string(&artifact).expect("execution error artifact");
+        assert_ne!(contents, stale);
+        assert!(contents.contains("edgefit.execution_error.v1"));
+        assert!(contents.contains("execution_error"));
+        if format == "json" {
+            parse_json(&contents).expect("parse optimization execution error");
+        } else {
+            assert!(contents.starts_with("# EdgeFit Execution Error"));
+        }
+    }
+
+    fs::remove_dir_all(dir).expect("cleanup temp dir");
+}
+
 fn unique_dir(name: &str) -> PathBuf {
     let stamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)

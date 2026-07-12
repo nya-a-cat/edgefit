@@ -796,7 +796,11 @@ def run_tool(
     observations: dict[str, Any] = {}
     detail = ""
     if status == "completed":
-        if artifact and len(artifact_hashes) != repetitions:
+        exit_codes = {item["exit_code"] for item in processes}
+        if len(exit_codes) != 1:
+            status = "runner_error"
+            detail = f"{name} produced inconsistent exit codes across repetitions"
+        elif artifact and len(artifact_hashes) != repetitions:
             status = "runner_error"
             detail = f"{name} completed without writing its requested artifact"
         elif len(set(artifact_hashes)) > 1:
@@ -942,19 +946,40 @@ def parse_edgefit_plan(_: str, artifact: Path | None) -> dict[str, Any]:
     require(isinstance(plan.get("segments"), list), "EdgeFit plan has no segments array")
     require(isinstance(plan.get("events"), list), "EdgeFit plan has no events array")
     require(isinstance(plan.get("blockers"), list), "EdgeFit plan has no blockers array")
-    for field in ("model_sha256", "target_fingerprint", "accelerator_id", "confidence"):
+    for field in (
+        "model_sha256",
+        "target_id",
+        "target_fingerprint",
+        "accelerator_id",
+        "confidence",
+    ):
         require(
             isinstance(plan.get(field), str) and bool(plan[field].strip()),
             f"EdgeFit plan field {field} must be a non-empty string",
         )
     require(
-        isinstance(plan.get("plan_hash"), str) and bool(plan["plan_hash"].strip()),
-        "EdgeFit plan has no plan hash",
+        isinstance(plan.get("plan_hash"), str)
+        and re.fullmatch(r"fnv1a64:[0-9A-Fa-f]{16}", plan["plan_hash"]) is not None,
+        "EdgeFit plan hash must use fnv1a64 followed by 16 hexadecimal digits",
     )
+
+    def nonnegative_integer(value: Any) -> bool:
+        return isinstance(value, int) and not isinstance(value, bool) and value >= 0
+
+    def optional_nonnegative_integer(value: Any) -> bool:
+        return value is None or nonnegative_integer(value)
+
+    def optional_identifier(value: Any) -> bool:
+        return value is None or (isinstance(value, str) and bool(value.strip()))
+
     proposed = plan.get("proposed")
     baseline = plan.get("baseline")
     require(isinstance(proposed, dict), "EdgeFit plan has no proposed metrics object")
     require(isinstance(baseline, dict), "EdgeFit plan has no baseline metrics object")
+    require(
+        nonnegative_integer(baseline.get("blockers")),
+        "EdgeFit plan baseline blockers must be a non-negative integer",
+    )
     for field in (
         "blockers",
         "transfer_ns",
@@ -962,80 +987,234 @@ def parse_edgefit_plan(_: str, artifact: Path | None) -> dict[str, Any]:
         "spill_bytes",
         "peak_scratchpad_bytes",
     ):
-        value = proposed.get(field)
         require(
-            isinstance(value, int) and not isinstance(value, bool) and value >= 0,
+            nonnegative_integer(proposed.get(field)),
             f"EdgeFit plan metric {field} must be a non-negative integer",
         )
     for scope, metrics in (("baseline", baseline), ("proposed", proposed)):
-        latency = metrics.get("latency_ns")
+        require("latency_ns" in metrics, f"EdgeFit plan {scope} has no latency_ns metric")
         require(
-            latency is None
-            or (isinstance(latency, int) and not isinstance(latency, bool) and latency >= 0),
+            optional_nonnegative_integer(metrics["latency_ns"]),
             f"EdgeFit plan {scope} latency_ns must be null or a non-negative integer",
         )
     for field in ("launch_ns", "compute_ns"):
-        value = proposed.get(field)
+        require(field in proposed, f"EdgeFit plan proposed metrics has no {field}")
         require(
-            value is None
-            or (isinstance(value, int) and not isinstance(value, bool) and value >= 0),
+            optional_nonnegative_integer(proposed[field]),
             f"EdgeFit plan metric {field} must be null or a non-negative integer",
         )
     require(
-        all(isinstance(item, dict) for item in plan["assignments"]),
-        "EdgeFit plan assignments must contain objects",
+        (proposed["launch_ns"] is None) == (proposed["compute_ns"] is None),
+        "EdgeFit plan launch_ns and compute_ns must both be null or integers",
     )
-    require(
-        all(isinstance(item, dict) for item in plan["segments"]),
-        "EdgeFit plan segments must contain objects",
-    )
-    require(
-        all(isinstance(item, dict) for item in plan["events"]),
-        "EdgeFit plan events must contain objects",
-    )
-    require(
-        all(isinstance(item, str) for item in plan["blockers"]),
-        "EdgeFit plan blockers must contain strings",
-    )
+
     assignments = plan["assignments"]
+    assignment_fields = {
+        "node_index",
+        "op_type",
+        "device",
+        "kernel_id",
+        "recipe_id",
+        "launch_ns",
+        "compute_ns",
+    }
+    for expected_index, assignment in enumerate(assignments):
+        require(isinstance(assignment, dict), "EdgeFit plan assignments must contain objects")
+        require(
+            assignment_fields <= assignment.keys(),
+            f"EdgeFit plan assignment {expected_index} is missing required fields",
+        )
+        require(
+            nonnegative_integer(assignment["node_index"])
+            and assignment["node_index"] == expected_index,
+            "EdgeFit plan assignment node_index values must be unique and contiguous from zero",
+        )
+        require(
+            isinstance(assignment["op_type"], str) and bool(assignment["op_type"].strip()),
+            f"EdgeFit plan assignment {expected_index} has an invalid op_type",
+        )
+        device = assignment["device"]
+        require(
+            device in {"cpu", "npu", "unsupported"},
+            f"EdgeFit plan assignment {expected_index} has an invalid device",
+        )
+        require(
+            optional_identifier(assignment["kernel_id"]),
+            f"EdgeFit plan assignment {expected_index} has an invalid kernel_id",
+        )
+        require(
+            optional_identifier(assignment["recipe_id"]),
+            f"EdgeFit plan assignment {expected_index} has an invalid recipe_id",
+        )
+        if device in {"cpu", "npu"}:
+            require(
+                isinstance(assignment["kernel_id"], str)
+                and bool(assignment["kernel_id"].strip()),
+                f"EdgeFit plan {device} assignment {expected_index} requires a kernel_id",
+            )
+            require(
+                nonnegative_integer(assignment["launch_ns"])
+                and nonnegative_integer(assignment["compute_ns"]),
+                f"EdgeFit plan {device} assignment {expected_index} requires latency integers",
+            )
+        else:
+            require(
+                assignment["launch_ns"] is None and assignment["compute_ns"] is None,
+                f"EdgeFit plan unsupported assignment {expected_index} must not have latency",
+            )
+        if device != "npu":
+            require(
+                assignment["recipe_id"] is None,
+                f"EdgeFit plan {device} assignment {expected_index} must not have a recipe_id",
+            )
+
+    segments = plan["segments"]
+    actual_segment_ranges = []
+    previous_last = -1
+    for expected_id, segment in enumerate(segments):
+        require(isinstance(segment, dict), "EdgeFit plan segments must contain objects")
+        require(
+            {"id", "first_node", "last_node"} <= segment.keys(),
+            f"EdgeFit plan segment {expected_id} is missing required fields",
+        )
+        require(
+            nonnegative_integer(segment["id"]) and segment["id"] == expected_id,
+            "EdgeFit plan segment IDs must be contiguous from zero",
+        )
+        first_node = segment["first_node"]
+        last_node = segment["last_node"]
+        require(
+            nonnegative_integer(first_node)
+            and nonnegative_integer(last_node)
+            and first_node <= last_node
+            and last_node < len(assignments),
+            f"EdgeFit plan segment {expected_id} has an invalid node range",
+        )
+        require(
+            first_node > previous_last,
+            "EdgeFit plan segments must be ordered and non-overlapping",
+        )
+        actual_segment_ranges.append((first_node, last_node))
+        previous_last = last_node
+
+    expected_segment_ranges = []
+    run_start = None
+    for node_index, assignment in enumerate(assignments):
+        if assignment["device"] == "npu":
+            if run_start is None:
+                run_start = node_index
+        elif run_start is not None:
+            expected_segment_ranges.append((run_start, node_index - 1))
+            run_start = None
+    if run_start is not None:
+        expected_segment_ranges.append((run_start, len(assignments) - 1))
+    require(
+        actual_segment_ranges == expected_segment_ranges,
+        "EdgeFit plan segments must exactly describe the maximal contiguous NPU runs",
+    )
+
     events = plan["events"]
-    assignment_device_counts = Counter(
-        str(item.get("device", "unknown")) for item in assignments
+    transfer_bytes = 0
+    transfer_ns = 0
+    spill_bytes = 0
+    event_fields = {"kind", "tensor", "bytes", "at_node", "latency_ns"}
+    for event_index, event in enumerate(events):
+        require(isinstance(event, dict), "EdgeFit plan events must contain objects")
+        require(
+            event_fields <= event.keys(),
+            f"EdgeFit plan event {event_index} is missing required fields",
+        )
+        require(
+            event["kind"] in {"load", "store", "spill", "reload"},
+            f"EdgeFit plan event {event_index} has an invalid kind",
+        )
+        require(
+            isinstance(event["tensor"], str) and bool(event["tensor"].strip()),
+            f"EdgeFit plan event {event_index} has an invalid tensor",
+        )
+        require(
+            nonnegative_integer(event["bytes"]) and event["bytes"] > 0,
+            f"EdgeFit plan event {event_index} bytes must be a positive integer",
+        )
+        require(
+            nonnegative_integer(event["at_node"]) and event["at_node"] < len(assignments),
+            f"EdgeFit plan event {event_index} at_node is out of range",
+        )
+        require(
+            nonnegative_integer(event["latency_ns"]),
+            f"EdgeFit plan event {event_index} latency_ns must be a non-negative integer",
+        )
+        transfer_bytes += event["bytes"]
+        transfer_ns += event["latency_ns"]
+        if event["kind"] == "spill":
+            spill_bytes += event["bytes"]
+
+    blockers = plan["blockers"]
+    require(
+        all(isinstance(item, str) and bool(item.strip()) for item in blockers),
+        "EdgeFit plan blockers must contain non-empty strings",
     )
-    event_kind_counts = Counter(str(item.get("kind", "unknown")) for item in events)
-    recipe_ids = sorted(
-        {str(item["recipe_id"]) for item in assignments if item.get("recipe_id") is not None}
+    require(
+        proposed["blockers"] == len(blockers),
+        "EdgeFit plan proposed blockers must equal the blockers array length",
     )
-    baseline_latency = baseline.get("latency_ns")
-    proposed_latency = proposed.get("latency_ns")
+    expected_status = "pass" if not blockers else "fail"
+    require(
+        plan["status"] == expected_status,
+        "EdgeFit plan status is inconsistent with its blockers",
+    )
+    require(
+        proposed["transfer_bytes"] == transfer_bytes,
+        "EdgeFit plan transfer_bytes does not equal the events total",
+    )
+    require(
+        proposed["transfer_ns"] == transfer_ns,
+        "EdgeFit plan transfer_ns does not equal the events total",
+    )
+    require(
+        proposed["spill_bytes"] == spill_bytes,
+        "EdgeFit plan spill_bytes does not equal the spill events total",
+    )
+
+    baseline_latency = baseline["latency_ns"]
+    proposed_latency = proposed["latency_ns"]
+    if proposed["launch_ns"] is not None:
+        expected_latency = proposed["launch_ns"] + proposed["compute_ns"] + transfer_ns
+        require(
+            proposed_latency == expected_latency,
+            "EdgeFit plan proposed latency_ns must equal launch, compute and transfer latency",
+        )
     latency_improved = (
         proposed_latency < baseline_latency
-        if isinstance(baseline_latency, int)
-        and not isinstance(baseline_latency, bool)
-        and isinstance(proposed_latency, int)
-        and not isinstance(proposed_latency, bool)
+        if baseline_latency is not None and proposed_latency is not None
         else None
+    )
+    assignment_device_counts = Counter(item["device"] for item in assignments)
+    event_kind_counts = Counter(item["kind"] for item in events)
+    recipe_ids = sorted(
+        {item["recipe_id"] for item in assignments if item["recipe_id"] is not None}
     )
     return {
         "plan_status": plan["status"],
         "model_sha256": plan["model_sha256"],
+        "target_id": plan["target_id"],
         "target_fingerprint": plan["target_fingerprint"],
         "accelerator_id": plan["accelerator_id"],
         "confidence": plan["confidence"],
         "plan_hash": plan["plan_hash"],
         "assignment_count": len(assignments),
         "assignment_device_counts": dict(sorted(assignment_device_counts.items())),
-        "segment_count": len(plan["segments"]),
+        "segment_count": len(segments),
         "event_count": len(events),
         "event_kind_counts": dict(sorted(event_kind_counts.items())),
         "recipe_ids": recipe_ids,
-        "blockers": plan["blockers"],
-        "baseline_blockers": baseline.get("blockers"),
-        "proposed_blockers": proposed.get("blockers"),
+        "blockers": blockers,
+        "baseline_blockers": baseline["blockers"],
+        "proposed_blockers": proposed["blockers"],
         "baseline_latency_ns": baseline_latency,
         "proposed_latency_ns": proposed_latency,
-        "launch_ns": proposed.get("launch_ns"),
-        "compute_ns": proposed.get("compute_ns"),
+        "launch_ns": proposed["launch_ns"],
+        "compute_ns": proposed["compute_ns"],
         "transfer_ns": proposed["transfer_ns"],
         "transfer_bytes": proposed["transfer_bytes"],
         "spill_bytes": proposed["spill_bytes"],
