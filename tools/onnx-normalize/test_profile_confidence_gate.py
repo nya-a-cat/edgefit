@@ -24,6 +24,14 @@ class ProfileConfidenceGateTests(unittest.TestCase):
         spec.loader.exec_module(module)
         cls.gate = module
 
+    def test_default_machine_policy_contract_passes(self) -> None:
+        self.assertTrue(self.gate.diagnostic_policy_passes(self.gate.DEFAULT_DIAGNOSTIC_POLICY))
+        detail = self.gate.diagnostic_policy_detail(self.gate.DEFAULT_DIAGNOSTIC_POLICY)
+        self.assertIn("schema=edgefit.diagnostic_policy.v1", detail)
+        self.assertIn("ef0104=yes", detail)
+        self.assertIn("severity_rules=yes", detail)
+        self.assertIn("reporting=yes", detail)
+
     def test_seed_profile_holds_until_runtime_smoke_exists(self) -> None:
         paths = self.write_inputs(confidence="seed", include_smoke=False)
         try:
@@ -49,6 +57,40 @@ class ProfileConfidenceGateTests(unittest.TestCase):
     def test_seed_profile_holds_until_warning_policy_exists(self) -> None:
         paths = self.write_inputs(confidence="seed", include_smoke=True, include_policy=False)
         try:
+            summary = self.gate.build_summary(*paths)
+        finally:
+            self.cleanup(paths)
+
+        self.assertEqual(summary["decision"], "hold_seed")
+        self.assertFalse(summary["confidence_uplift_ready"])
+        self.assertIn("document warning-only diagnostic policy before confidence review", summary["next_actions"])
+
+    def test_seed_profile_holds_when_warning_policy_is_malformed(self) -> None:
+        paths = self.write_inputs(confidence="seed", include_smoke=True)
+        try:
+            paths[8].write_text("{not-json", encoding="utf-8")
+            summary = self.gate.build_summary(*paths)
+        finally:
+            self.cleanup(paths)
+
+        self.assertEqual(summary["decision"], "hold_seed")
+        self.assertFalse(summary["confidence_uplift_ready"])
+        self.assertIn("document warning-only diagnostic policy before confidence review", summary["next_actions"])
+
+    def test_seed_profile_holds_when_warning_policy_has_wrong_types(self) -> None:
+        paths = self.write_inputs(confidence="seed", include_smoke=True)
+        try:
+            paths[8].write_text(
+                json.dumps(
+                    {
+                        "schema": "edgefit.diagnostic_policy.v1",
+                        "warning_only_diagnostics": "EF0104",
+                        "gate_status": [],
+                        "reporting": True,
+                    }
+                ),
+                encoding="utf-8",
+            )
             summary = self.gate.build_summary(*paths)
         finally:
             self.cleanup(paths)
@@ -94,6 +136,8 @@ class ProfileConfidenceGateTests(unittest.TestCase):
         self.assertIn("| `runtime_boundary_verified` | `pass` |", markdown)
         self.assertIn("| `public_pr_trials_verified` | `pass` |", markdown)
         self.assertIn("| `warning_diagnostic_policy_documented` | `pass` |", markdown)
+        policy_check = next(item for item in summary["checks"] if item["id"] == "warning_diagnostic_policy_documented")
+        self.assertIn("schema=edgefit.diagnostic_policy.v1", policy_check["detail"])
         self.assertIn("| `corpus_expansion_gate_verified` | `pass` |", markdown)
         self.assertIn("| `operator_support_audit_verified` | `pass` |", markdown)
 
@@ -114,7 +158,7 @@ class ProfileConfidenceGateTests(unittest.TestCase):
         runtime = WORKSPACE_TMP / f"confidence_gate_runtime_{suffix}.json"
         smoke = WORKSPACE_TMP / f"confidence_gate_smoke_{suffix}.json"
         boundary = WORKSPACE_TMP / f"confidence_gate_boundary_{suffix}.json"
-        policy = WORKSPACE_TMP / f"confidence_gate_policy_{suffix}.md"
+        policy = WORKSPACE_TMP / f"confidence_gate_policy_{suffix}.json"
         public_pr_trials = WORKSPACE_TMP / f"confidence_gate_public_pr_trials_{suffix}.json"
 
         profile.write_text(
@@ -247,12 +291,17 @@ ops:
             )
         if include_policy:
             policy.write_text(
-                """
-# Diagnostic Severity and Gate Policy
-
-`EF0104` is the warning-only diagnostic for ORT seed review. Warning diagnostics keep status `pass`; error diagnostics set status `fail`. SARIF output keeps warnings visible. JSON reports include `suppressed_diagnostics` for accepted diagnostic IDs.
-""".strip()
-                + "\n",
+                json.dumps(
+                    {
+                        "schema": "edgefit.diagnostic_policy.v1",
+                        "warning_only_diagnostics": ["EF0104"],
+                        "gate_status": {"warning": "pass", "error": "fail"},
+                        "reporting": {
+                            "sarif_includes_warnings": True,
+                            "json_includes_suppressed_diagnostics": True,
+                        },
+                    }
+                ),
                 encoding="utf-8",
             )
         if include_public_pr_trials:

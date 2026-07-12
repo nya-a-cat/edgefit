@@ -1,0 +1,14 @@
+{
+  "schema": "edgefit.diagnostic_policy.v1",
+  "warning_only_diagnostics": [
+    "EF0104"
+  ],
+  "gate_status": {
+    "warning": "pass",
+    "error": "fail"
+  },
+  "reporting": {
+    "sarif_includes_warnings": true,
+    "json_includes_suppressed_diagnostics": true
+  }
+}

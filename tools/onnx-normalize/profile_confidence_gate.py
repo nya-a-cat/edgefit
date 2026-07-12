@@ -17,7 +17,7 @@ DEFAULT_OPERATOR_AUDIT = ROOT / "tmp" / "real_world_corpus" / "operator-support-
 DEFAULT_RUNTIME_EVIDENCE_RESULT = ROOT / "tmp" / "ort-runtime-evidence" / "ort-runtime-evidence-result.json"
 DEFAULT_RUNTIME_SMOKE = ROOT / "tmp" / "real_world_corpus" / "runtime-smoke.json"
 DEFAULT_RUNTIME_BOUNDARY = ROOT / "tmp" / "ort-runtime-boundary" / "ort-runtime-boundary.json"
-DEFAULT_DIAGNOSTIC_POLICY = ROOT / "docs" / "DIAGNOSTIC_POLICY.md"
+DEFAULT_DIAGNOSTIC_POLICY = ROOT / "tools" / "onnx-normalize" / "diagnostic_policy.json"
 DEFAULT_PUBLIC_PR_TRIALS = ROOT / "tmp" / "public_pr_trials" / "public-pr-trial-gate.json"
 DEFAULT_OUT = ROOT / "tmp" / "real_world_corpus" / "profile-confidence-gate.json"
 DEFAULT_MARKDOWN = ROOT / "tmp" / "real_world_corpus" / "profile-confidence-gate.md"
@@ -201,20 +201,61 @@ def matrix_detail(entries: list[dict[str, Any]]) -> str:
 
 
 def diagnostic_policy_passes(path: Path) -> bool:
-    if not path.exists():
+    policy = read_diagnostic_policy(path)
+    if policy is None:
         return False
-    text = path.read_text(encoding="utf-8").lower()
-    return all(token in text for token in ["ef0104", "warning", "error", "pass", "sarif", "suppressed_diagnostics"])
+    gate_status = policy.get("gate_status")
+    reporting = policy.get("reporting")
+    warning_only = policy.get("warning_only_diagnostics")
+    return (
+        policy.get("schema") == "edgefit.diagnostic_policy.v1"
+        and isinstance(warning_only, list)
+        and "EF0104" in warning_only
+        and isinstance(gate_status, dict)
+        and gate_status.get("warning") == "pass"
+        and gate_status.get("error") == "fail"
+        and isinstance(reporting, dict)
+        and reporting.get("sarif_includes_warnings") is True
+        and reporting.get("json_includes_suppressed_diagnostics") is True
+    )
 
 
 def diagnostic_policy_detail(path: Path) -> str:
+    policy = read_diagnostic_policy(path)
+    if policy is None:
+        return f"diagnostic policy missing or invalid at {path}"
+    gate_status = policy.get("gate_status")
+    reporting = policy.get("reporting")
+    warning_only = policy.get("warning_only_diagnostics")
+    ef0104 = "yes" if isinstance(warning_only, list) and "EF0104" in warning_only else "no"
+    severity_rules = (
+        "yes"
+        if isinstance(gate_status, dict)
+        and gate_status.get("warning") == "pass"
+        and gate_status.get("error") == "fail"
+        else "no"
+    )
+    reporting_rules = (
+        "yes"
+        if isinstance(reporting, dict)
+        and reporting.get("sarif_includes_warnings") is True
+        and reporting.get("json_includes_suppressed_diagnostics") is True
+        else "no"
+    )
+    return (
+        f"policy={path}; schema={policy.get('schema')}; ef0104={ef0104}; "
+        f"severity_rules={severity_rules}; reporting={reporting_rules}"
+    )
+
+
+def read_diagnostic_policy(path: Path) -> dict[str, Any] | None:
     if not path.exists():
-        return f"diagnostic policy missing at {path}"
-    text = path.read_text(encoding="utf-8").lower()
-    ef0104 = "yes" if "ef0104" in text else "no"
-    severity_rules = "yes" if all(token in text for token in ["warning", "error", "pass"]) else "no"
-    reporting = "yes" if all(token in text for token in ["sarif", "suppressed_diagnostics"]) else "no"
-    return f"policy={path}; ef0104={ef0104}; severity_rules={severity_rules}; reporting={reporting}"
+        return None
+    try:
+        policy = read_json(path)
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        return None
+    return policy if isinstance(policy, dict) else None
 
 
 def corpus_gate_passes(corpus_gate: dict[str, Any] | None) -> bool:

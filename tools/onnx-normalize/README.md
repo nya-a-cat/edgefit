@@ -17,7 +17,7 @@ Install the adapter dependency:
 uv pip install --python .venv\Scripts\python.exe -r tools/onnx-normalize/requirements.txt
 ```
 
-Install the optional runtime-smoke dependency when running ONNX Runtime smoke verification:
+Install the optional runtime dependency when running ONNX Runtime inference verification:
 
 ```powershell
 uv pip install --python .venv\Scripts\python.exe -r tools/onnx-normalize/requirements-runtime.txt
@@ -126,10 +126,10 @@ metadata and verifies that the installed `onnx` version matches the exact pin in
 `requirements.txt`. It fails when the version status is not `match` or when an
 allowlist operator has neither official schema coverage nor generated, real-world, or runtime-source evidence for the same domain and operator.
 
-Run runtime smoke inference with ONNX Runtime after the corpus verifier passes:
+Run runtime inference verification with ONNX Runtime after the corpus verifier passes:
 
 ```powershell
-python tools/onnx-normalize/runtime_smoke.py --profile targets/ort-mobile-cpu.yaml --corpus-result tmp/real_world_corpus/corpus-result.json --provider CPUExecutionProvider --out tmp/real_world_corpus/runtime-smoke.json
+python tools/onnx-normalize/runtime_smoke.py --profile targets/ort-mobile-cpu.yaml --corpus-result tmp/real_world_corpus/corpus-result.json --provider CPUExecutionProvider --out tmp/real_world_corpus/runtime-verification.json
 ```
 
 Run the ORT runtime-boundary check after corpus and fixture evidence are available:
@@ -141,19 +141,20 @@ python tools/onnx-normalize/ort_runtime_boundary.py --profile targets/ort-mobile
 Run the public PR trial gate before the profile confidence gate:
 
 ```powershell
-cp examples/public_pr_trials.example.json docs/public_pr_trials.json
-python tools/public_pr_trial_gate.py --manifest docs/public_pr_trials.json --out tmp/public_pr_trials/public-pr-trial-gate.json --markdown-out tmp/public_pr_trials/public-pr-trial-gate.md
+New-Item -ItemType Directory -Force tmp/public_pr_trials | Out-Null
+Copy-Item examples/public_pr_trials.example.json tmp/public_pr_trials/public-pr-trials.json
+python tools/public_pr_trial_gate.py --manifest tmp/public_pr_trials/public-pr-trials.json --out tmp/public_pr_trials/public-pr-trial-gate.json --markdown-out tmp/public_pr_trials/public-pr-trial-gate.md
 ```
 
 Run the profile confidence gate after the reference check, matrix, corpus gate,
-operator-support audit, runtime evidence, runtime smoke verification, ORT
-runtime-boundary check, diagnostic policy check, and public PR trial gate:
+operator-support audit, runtime evidence, runtime inference verification, ORT
+runtime-boundary check, machine policy check, and public PR trial gate:
 
 ```powershell
-python tools/onnx-normalize/profile_confidence_gate.py --profile targets/ort-mobile-cpu.yaml --reference tmp/real_world_corpus/profile-reference.json --matrix tmp/real_world_corpus/profile-matrix.json --corpus-gate tmp/real_world_corpus/corpus-expansion-gate.json --operator-audit tmp/real_world_corpus/operator-support-audit.json --runtime-evidence-result tmp/ort-runtime-evidence/ort-runtime-evidence-result.json --runtime-smoke tmp/real_world_corpus/runtime-smoke.json --runtime-boundary tmp/ort-runtime-boundary/ort-runtime-boundary.json --diagnostic-policy docs/DIAGNOSTIC_POLICY.md --public-pr-trials tmp/public_pr_trials/public-pr-trial-gate.json --out tmp/real_world_corpus/profile-confidence-gate.json --markdown-out tmp/real_world_corpus/profile-confidence-gate.md
+python tools/onnx-normalize/profile_confidence_gate.py --profile targets/ort-mobile-cpu.yaml --reference tmp/real_world_corpus/profile-reference.json --matrix tmp/real_world_corpus/profile-matrix.json --corpus-gate tmp/real_world_corpus/corpus-expansion-gate.json --operator-audit tmp/real_world_corpus/operator-support-audit.json --runtime-evidence-result tmp/ort-runtime-evidence/ort-runtime-evidence-result.json --runtime-smoke tmp/real_world_corpus/runtime-verification.json --runtime-boundary tmp/ort-runtime-boundary/ort-runtime-boundary.json --diagnostic-policy tools/onnx-normalize/diagnostic_policy.json --public-pr-trials tmp/public_pr_trials/public-pr-trial-gate.json --out tmp/real_world_corpus/profile-confidence-gate.json --markdown-out tmp/real_world_corpus/profile-confidence-gate.md
 ```
 
 The current gate decision is `hold_seed` because the local public PR trial
-manifest has 0/3 verified repositories. The warning-only diagnostic policy is
-public in `docs/DIAGNOSTIC_POLICY.md`; detailed confidence, runtime-boundary,
-and trial review artifacts remain local.
+manifest has 0/3 verified repositories. The machine-readable warning-only
+policy is versioned in `tools/onnx-normalize/diagnostic_policy.json`; detailed
+confidence, runtime-boundary, and trial review materials remain local.

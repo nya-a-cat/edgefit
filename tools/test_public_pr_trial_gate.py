@@ -21,6 +21,12 @@ class PublicPrTrialGateTests(unittest.TestCase):
         spec.loader.exec_module(module)
         cls.gate = module
 
+    def test_default_manifest_is_local_tmp_path(self) -> None:
+        self.assertEqual(
+            self.gate.DEFAULT_MANIFEST,
+            Path.cwd() / "tmp" / "public_pr_trials" / "public-pr-trials.json",
+        )
+
     def test_empty_manifest_needs_trials(self) -> None:
         manifest = self.write_manifest({"schema": "edgefit.public_pr_trials.v1", "sample_goal": 3, "trials": []})
         try:

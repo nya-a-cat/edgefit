@@ -8,7 +8,7 @@ from typing import Any
 
 
 ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_MANIFEST = ROOT / "docs" / "public_pr_trials.json"
+DEFAULT_MANIFEST = ROOT / "tmp" / "public_pr_trials" / "public-pr-trials.json"
 DEFAULT_OUT = ROOT / "tmp" / "public_pr_trials" / "public-pr-trial-gate.json"
 DEFAULT_MARKDOWN = ROOT / "tmp" / "public_pr_trials" / "public-pr-trial-gate.md"
 
