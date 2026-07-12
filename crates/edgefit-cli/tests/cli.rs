@@ -101,7 +101,7 @@ fn optimize_execution_failures_overwrite_stale_artifacts() {
     let partial_accelerator = dir.join("partial-accelerator.yaml");
     let profile = fs::read_to_string(fixture("targets/virtual-npu.yaml"))
         .expect("read accelerator profile")
-        .replace("  id: generic-npu-v1\n", "");
+        .replace("id: generic-npu-v1", "id:");
     fs::write(&partial_accelerator, profile).expect("write invalid accelerator profile");
     let cases = [
         (

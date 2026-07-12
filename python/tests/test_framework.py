@@ -82,7 +82,7 @@ class FrameworkTests(unittest.TestCase):
         valid_target = edgefit.load_profile(target)
         invalid_target = type(valid_target)(
             path=Path("invalid-target.yaml"),
-            text=valid_target.text.replace("  id: generic-npu-v1\n", ""),
+            text=valid_target.text.replace("id: generic-npu-v1", "id:"),
             target_id=valid_target.target_id,
         )
         with self.assertRaisesRegex(edgefit.EdgeFitError, "accelerator.id"):

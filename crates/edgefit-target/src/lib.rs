@@ -1327,7 +1327,7 @@ ops:
     #[test]
     fn rejects_partial_accelerator_without_id() {
         let text = include_str!("../../../targets/virtual-npu.yaml")
-            .replace("  id: generic-npu-v1\n", "");
+            .replace("id: generic-npu-v1", "id:");
 
         let error = parse_profile(&text, PathBuf::from("target.yaml")).unwrap_err();
 
