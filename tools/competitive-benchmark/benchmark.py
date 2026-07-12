@@ -1058,11 +1058,24 @@ def parse_edgefit_plan(_: str, artifact: Path | None) -> dict[str, Any]:
             f"EdgeFit plan assignment {expected_index} has an invalid recipe_id",
         )
         if device in {"cpu", "npu"}:
-            require(
-                isinstance(assignment["kernel_id"], str)
-                and bool(assignment["kernel_id"].strip()),
-                f"EdgeFit plan {device} assignment {expected_index} requires a kernel_id",
-            )
+            if device == "cpu":
+                require(
+                    isinstance(assignment["kernel_id"], str)
+                    and bool(assignment["kernel_id"].strip())
+                    and assignment["recipe_id"] is None,
+                    f"EdgeFit plan CPU assignment {expected_index} requires only a kernel_id",
+                )
+            else:
+                has_kernel = isinstance(assignment["kernel_id"], str) and bool(
+                    assignment["kernel_id"].strip()
+                )
+                has_recipe = isinstance(assignment["recipe_id"], str) and bool(
+                    assignment["recipe_id"].strip()
+                )
+                require(
+                    has_kernel != has_recipe,
+                    f"EdgeFit plan NPU assignment {expected_index} requires exactly one of kernel_id or recipe_id",
+                )
             require(
                 nonnegative_integer(assignment["launch_ns"])
                 and nonnegative_integer(assignment["compute_ns"]),
