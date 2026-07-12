@@ -6,7 +6,14 @@ import argparse
 import json
 from pathlib import Path
 
-from .framework import EdgeFitError, check, optimize, render, render_optimization
+from .framework import (
+    EdgeFitError,
+    _run_calibration,
+    check,
+    optimize,
+    render,
+    render_optimization,
+)
 
 
 def main() -> int:
@@ -23,10 +30,28 @@ def main() -> int:
     optimize_command.add_argument("--target", required=True)
     optimize_command.add_argument("--format", choices=["json", "markdown"], default="json")
     optimize_command.add_argument("--out")
+    calibration_command = subcommands.add_parser("calibration")
+    calibration_subcommands = calibration_command.add_subparsers(
+        dest="calibration_command", required=True
+    )
+    verify_command = calibration_subcommands.add_parser("verify")
+    verify_command.add_argument("evidence")
+    verify_command.add_argument("--model", required=True)
+    verify_command.add_argument("--target", required=True)
+    verify_command.add_argument("--format", choices=["json", "markdown"], default="json")
+    verify_command.add_argument("--out")
     args = parser.parse_args()
 
     try:
-        if args.command == "optimize":
+        if args.command == "calibration":
+            status, output = _run_calibration(
+                args.evidence,
+                args.model,
+                args.target,
+                args.format,
+            )
+            report = {"status": status}
+        elif args.command == "optimize":
             report = optimize(args.model, args.target)
             output = render_optimization(args.model, args.target, format=args.format)
         else:

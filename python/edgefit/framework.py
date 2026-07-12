@@ -107,6 +107,45 @@ def render_optimization(
         raise EdgeFitError(str(exc)) from exc
 
 
+def verify_calibration(
+    evidence: str | Path,
+    model: str | Path,
+    target: str | Path,
+) -> dict[str, object]:
+    """Verify hash-bound runtime/device calibration evidence."""
+    _, rendered = _run_calibration(evidence, model, target, "json")
+    return json.loads(rendered)
+
+
+def render_calibration(
+    evidence: str | Path,
+    model: str | Path,
+    target: str | Path,
+    *,
+    format: str = "json",
+) -> str:
+    return _run_calibration(evidence, model, target, format)[1]
+
+
+def _run_calibration(
+    evidence: str | Path,
+    model: str | Path,
+    target: str | Path,
+    format: str,
+) -> tuple[str, str]:
+    if format not in {"json", "markdown"}:
+        raise EdgeFitError("calibration format must be json or markdown")
+    try:
+        return _native.verify_calibration(
+            str(Path(evidence)),
+            str(Path(model)),
+            str(Path(target)),
+            format,
+        )
+    except ValueError as exc:
+        raise EdgeFitError(str(exc)) from exc
+
+
 def batch(
     models: Iterable[str | Path],
     target: str | Path | TargetProfileSource,

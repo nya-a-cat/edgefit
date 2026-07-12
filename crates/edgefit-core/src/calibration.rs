@@ -92,9 +92,37 @@ pub fn verify_calibration_files(
         }
     };
 
+    let model_sha256 = sha256_hex(&model_bytes);
+    let target_profile_sha256 = sha256_hex(&target_bytes);
+    if evidence.bindings.model_sha256 != model_sha256 {
+        return Err("calibration model SHA-256 binding mismatch".to_string());
+    }
+    if evidence.bindings.target_profile_sha256 != target_profile_sha256 {
+        return Err("calibration target profile SHA-256 binding mismatch".to_string());
+    }
+    if evidence.bindings.runtime_binary_sha256 != runtime_binary_sha256 {
+        return Err("calibration runtime binary SHA-256 binding mismatch".to_string());
+    }
+    for (attachment, bytes) in evidence.attachments.iter().zip(attachment_bytes.iter()) {
+        let actual_bytes = u64::try_from(bytes.len())
+            .map_err(|_| format!("attachment {} length cannot be represented", attachment.path))?;
+        if actual_bytes != attachment.bytes {
+            return Err(format!(
+                "calibration attachment {} byte count mismatch",
+                attachment.path
+            ));
+        }
+        if sha256_hex(bytes) != attachment.sha256 {
+            return Err(format!(
+                "calibration attachment {} SHA-256 mismatch",
+                attachment.path
+            ));
+        }
+    }
+
     let expected = ExpectedBindings {
-        model_sha256: sha256_hex(&model_bytes),
-        target_profile_sha256: sha256_hex(&target_bytes),
+        model_sha256,
+        target_profile_sha256,
         runtime_binary_sha256,
     };
     // Arena authority comes from the target profile. Evidence supplies only the latency budget.
@@ -106,21 +134,37 @@ pub fn verify_calibration_files(
         .map_err(|err| format!("failed to verify calibration evidence: {err}"))
 }
 
+pub fn render_calibration_files_with_status(
+    evidence_path: impl AsRef<Path>,
+    model_path: impl AsRef<Path>,
+    target_path: impl AsRef<Path>,
+    format: &str,
+) -> EdgeFitResult<(String, String)> {
+    if !matches!(format, "json" | "markdown") {
+        return Err("calibration format must be json or markdown".to_string());
+    }
+    let verification = verify_calibration_files(evidence_path, model_path, target_path)?;
+    let status = if verification.status == edgefit_calibration::CheckStatus::Fail {
+        "fail"
+    } else {
+        "pass"
+    };
+    let rendered = match format {
+        "json" => render_verification_json(&verification),
+        "markdown" => render_verification_markdown(&verification),
+        _ => unreachable!("format was checked above"),
+    };
+    Ok((status.to_string(), rendered))
+}
+
 pub fn render_calibration_files(
     evidence_path: impl AsRef<Path>,
     model_path: impl AsRef<Path>,
     target_path: impl AsRef<Path>,
     format: &str,
 ) -> EdgeFitResult<String> {
-    if !matches!(format, "json" | "markdown") {
-        return Err("calibration format must be json or markdown".to_string());
-    }
-    let verification = verify_calibration_files(evidence_path, model_path, target_path)?;
-    Ok(match format {
-        "json" => render_verification_json(&verification),
-        "markdown" => render_verification_markdown(&verification),
-        _ => unreachable!("format was checked above"),
-    })
+    render_calibration_files_with_status(evidence_path, model_path, target_path, format)
+        .map(|(_, rendered)| rendered)
 }
 
 fn load_declared_attachments(

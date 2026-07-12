@@ -3,8 +3,8 @@
 //! 绑定层只转换字符串、列表与异常；分析语义必须保留在 edgefit-core。
 
 use edgefit_core::{
-    render_adapter_generated_text, render_normalized_text, render_optimization_text,
-    validate_target_text,
+    render_adapter_generated_text, render_calibration_files_with_status, render_normalized_text,
+    render_optimization_text, validate_target_text,
 };
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
@@ -64,10 +64,23 @@ fn optimize(
     .map_err(PyValueError::new_err)
 }
 
+#[pyfunction]
+#[pyo3(signature = (evidence, model, target, format="json"))]
+fn verify_calibration(
+    evidence: &str,
+    model: &str,
+    target: &str,
+    format: &str,
+) -> PyResult<(String, String)> {
+    render_calibration_files_with_status(evidence, model, target, format)
+        .map_err(PyValueError::new_err)
+}
+
 #[pymodule]
 fn _native(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(analyze, module)?)?;
     module.add_function(wrap_pyfunction!(optimize, module)?)?;
     module.add_function(wrap_pyfunction!(validate_target, module)?)?;
+    module.add_function(wrap_pyfunction!(verify_calibration, module)?)?;
     Ok(())
 }

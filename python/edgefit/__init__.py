@@ -8,6 +8,8 @@ __all__ = [
     "optimize",
     "render",
     "render_optimization",
+    "render_calibration",
+    "verify_calibration",
 ]
 
 
