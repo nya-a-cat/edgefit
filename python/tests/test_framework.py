@@ -99,7 +99,7 @@ class FrameworkTests(unittest.TestCase):
             text=valid_target.text.replace("id: generic-npu-v1", "id:"),
             target_id=valid_target.target_id,
         )
-        with self.assertRaisesRegex(edgefit.EdgeFitError, "accelerator.id"):
+        with self.assertRaisesRegex(edgefit.EdgeFitError, "accelerator section.*id"):
             edgefit.optimize(model, invalid_target)
 
     def test_check_rejects_invalid_format_and_target(self) -> None:
