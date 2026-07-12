@@ -61,7 +61,7 @@ pub struct OptimizationPlan {
 
 #[derive(Clone, Copy)]
 struct Candidate<'a> {
-    cost: &'a KernelCost,
+    kernel_id: Option<&'a str>,
     launch_ns: u64,
     compute_ns: u64,
     recipe_id: Option<&'a str>,
@@ -83,10 +83,15 @@ pub fn optimize(model: &NormalizedModel, profile: &TargetProfile) -> EdgeFitResu
     for (node_index, node) in model.nodes.iter().enumerate() {
         let rule = profile
             .op_rule(&node.domain, &node.op_type)
-            .filter(|rule| contract_compatible(node, rule, model));
+            .filter(|rule| contract_compatible(node, rule, model, profile));
         let cpu = match rule.and_then(|rule| rule.cpu_cost.as_ref()) {
             Some(cost) => evaluate_cost(cost, node, model, profile)?.map(|(launch_ns, compute_ns)| {
-                Candidate { cost, launch_ns, compute_ns, recipe_id: None }
+                Candidate {
+                    kernel_id: Some(cost.id.as_str()),
+                    launch_ns,
+                    compute_ns,
+                    recipe_id: None,
+                }
             }),
             None => None,
         };
@@ -106,7 +111,12 @@ pub fn optimize(model: &NormalizedModel, profile: &TargetProfile) -> EdgeFitResu
 
         let direct = match rule.and_then(|rule| rule.npu_cost.as_ref()) {
             Some(cost) => evaluate_cost(cost, node, model, profile)?.map(|(launch_ns, compute_ns)| {
-                Candidate { cost, launch_ns, compute_ns, recipe_id: None }
+                Candidate {
+                    kernel_id: Some(cost.id.as_str()),
+                    launch_ns,
+                    compute_ns,
+                    recipe_id: None,
+                }
             }),
             None => None,
         };
@@ -117,7 +127,7 @@ pub fn optimize(model: &NormalizedModel, profile: &TargetProfile) -> EdgeFitResu
             Some(recipe) => recipe_candidate(recipe, node, model, profile)?,
             None => None,
         };
-        let npu = direct.or(recipe);
+        let npu = best_candidate(direct, recipe)?;
 
         let choose_npu = match (cpu, npu) {
             (None, Some(_)) => true,
@@ -152,31 +162,25 @@ pub fn optimize(model: &NormalizedModel, profile: &TargetProfile) -> EdgeFitResu
         }
     }
 
-    let has_npu = assignments.iter().any(|assignment| assignment.device == "npu");
-    let mut plan = build_plan(
+    let cpu_plan = build_plan(
+        model,
+        profile,
+        baseline_blockers,
+        baseline_latency,
+        cpu_assignments,
+    )?;
+    let proposed_plan = build_plan(
         model,
         profile,
         baseline_blockers,
         baseline_latency,
         assignments,
     )?;
-    if baseline_blockers == 0
-        && baseline_latency.is_some()
-        && has_npu
-        && (plan.proposed_blockers > baseline_blockers
-            || plan
-                .proposed_latency_ns
-                .zip(baseline_latency)
-                .is_none_or(|(proposed, baseline)| proposed >= baseline))
-    {
-        plan = build_plan(
-            model,
-            profile,
-            baseline_blockers,
-            baseline_latency,
-            cpu_assignments,
-        )?;
-    }
+    let plan = if plan_is_better(&proposed_plan, &cpu_plan) {
+        proposed_plan
+    } else {
+        cpu_plan
+    };
     validate_plan_invariants(&plan, model, profile)?;
     Ok(plan)
 }
@@ -233,6 +237,44 @@ fn prospective_boundary_latency(
     Ok(Some(total))
 }
 
+fn best_candidate<'a>(
+    direct: Option<Candidate<'a>>,
+    recipe: Option<Candidate<'a>>,
+) -> EdgeFitResult<Option<Candidate<'a>>> {
+    match (direct, recipe) {
+        (Some(direct), Some(recipe)) => {
+            let direct_total = checked_add(
+                direct.launch_ns,
+                direct.compute_ns,
+                "direct NPU candidate latency",
+            )?;
+            let recipe_total = checked_add(
+                recipe.launch_ns,
+                recipe.compute_ns,
+                "replacement recipe candidate latency",
+            )?;
+            if recipe_total < direct_total {
+                Ok(Some(recipe))
+            } else {
+                Ok(Some(direct))
+            }
+        }
+        (candidate @ Some(_), None) | (None, candidate @ Some(_)) => Ok(candidate),
+        (None, None) => Ok(None),
+    }
+}
+
+fn plan_is_better(candidate: &OptimizationPlan, fallback: &OptimizationPlan) -> bool {
+    if candidate.proposed_blockers != fallback.proposed_blockers {
+        return candidate.proposed_blockers < fallback.proposed_blockers;
+    }
+    match (candidate.proposed_latency_ns, fallback.proposed_latency_ns) {
+        (Some(candidate), Some(fallback)) => candidate < fallback,
+        (Some(_), None) => true,
+        _ => false,
+    }
+}
+
 fn assignment_for_candidate(
     node_index: usize,
     node: &NodeInfo,
@@ -244,7 +286,7 @@ fn assignment_for_candidate(
             node_index,
             op_type: node.op_type.clone(),
             device: device.to_string(),
-            kernel_id: Some(candidate.cost.id.clone()),
+            kernel_id: candidate.kernel_id.map(str::to_string),
             recipe_id: candidate.recipe_id.map(str::to_string),
             launch_ns: Some(candidate.launch_ns),
             compute_ns: Some(candidate.compute_ns),
@@ -412,7 +454,11 @@ fn simulate_npu(
                         &mut transfer_bytes,
                     )?;
                 } else {
-                    blockers.push(format!("node:{node_index} tensor:{input} scratchpad_unavailable"));
+                    blockers.push(scratchpad_blocker(
+                        node_index,
+                        Some(input),
+                        accelerator.spill_allowed,
+                    ));
                 }
             }
 
@@ -438,7 +484,11 @@ fn simulate_npu(
                 peak_bytes = peak_bytes.max(used);
                 true
             } else {
-                blockers.push(format!("node:{node_index} workspace scratchpad_unavailable"));
+                blockers.push(scratchpad_blocker(
+                    node_index,
+                    None,
+                    accelerator.spill_allowed,
+                ));
                 false
             };
 
@@ -471,33 +521,39 @@ fn simulate_npu(
                     peak_bytes = peak_bytes.max(used);
                     protected.insert(output.clone());
                 } else {
-                    blockers.push(format!("node:{node_index} tensor:{output} scratchpad_unavailable"));
+                    blockers.push(scratchpad_blocker(
+                        node_index,
+                        Some(output),
+                        accelerator.spill_allowed,
+                    ));
                 }
             }
             if workspace_allocated {
                 used = checked_sub(used, workspace_bytes, "NPU workspace release")?;
             }
 
-            let mut released = 0_u64;
-            resident.retain(|tensor, bytes| {
-                let keep = consumers
-                    .get(tensor)
-                    .is_some_and(|uses| {
-                        uses.iter().any(|index| {
-                            *index > node_index && *index <= segment.last_node
+            let dead = resident
+                .iter()
+                .filter(|(tensor, _)| {
+                    !consumers
+                        .get(*tensor)
+                        .is_some_and(|uses| {
+                            uses.iter().any(|index| {
+                                *index > node_index && *index <= segment.last_node
+                            })
                         })
-                    })
-                    || graph_outputs.contains(tensor)
-                    || consumers
-                        .get(tensor)
-                        .is_some_and(|uses| uses.iter().any(|index| *index > segment.last_node));
-                if !keep {
-                    released = released
-                        .checked_add(*bytes)
-                        .expect("resident byte sum cannot exceed checked scratchpad usage");
-                }
-                keep
-            });
+                        && !graph_outputs.contains(*tensor)
+                        && !consumers
+                            .get(*tensor)
+                            .is_some_and(|uses| uses.iter().any(|index| *index > segment.last_node))
+                })
+                .map(|(tensor, bytes)| (tensor.clone(), *bytes))
+                .collect::<Vec<_>>();
+            let mut released = 0_u64;
+            for (tensor, bytes) in dead {
+                resident.remove(&tensor);
+                released = checked_add(released, bytes, "scratchpad dead tensor byte sum")?;
+            }
             used = checked_sub(used, released, "scratchpad dead tensor release")?;
         }
         let last_node = segment.last_node;
@@ -547,6 +603,17 @@ fn assignment_workspace_bytes(
     Ok(workspace_bytes)
 }
 
+fn scratchpad_blocker(node_index: usize, tensor: Option<&str>, spill_allowed: bool) -> String {
+    let subject = tensor
+        .map(|tensor| format!("tensor:{tensor}"))
+        .unwrap_or_else(|| "workspace".to_string());
+    if spill_allowed {
+        format!("node:{node_index} {subject} scratchpad_unavailable")
+    } else {
+        format!("node:{node_index} {subject} scratchpad_unavailable spill_disabled")
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn spill_until_fit(
     node_index: usize,
@@ -562,15 +629,24 @@ fn spill_until_fit(
     transfer_bytes: &mut u64,
     spill_bytes: &mut u64,
 ) -> EdgeFitResult<bool> {
-    while checked_add(*used, required, "scratchpad capacity check")?
+    if checked_add(*used, required, "scratchpad capacity check")?
+        <= accelerator.scratchpad_bytes
+    {
+        return Ok(true);
+    }
+    if !accelerator.spill_allowed {
+        return Ok(false);
+    }
+
+    let mut planned_used = *used;
+    let mut victims = Vec::<(String, u64)>::new();
+    let mut selected = BTreeSet::<String>::new();
+    while checked_add(planned_used, required, "scratchpad capacity check")?
         > accelerator.scratchpad_bytes
     {
-        if !accelerator.spill_allowed {
-            return Ok(false);
-        }
         let victim = resident
             .iter()
-            .filter(|(tensor, _)| !protected.contains(*tensor))
+            .filter(|(tensor, _)| !protected.contains(*tensor) && !selected.contains(*tensor))
             .max_by_key(|(tensor, bytes)| {
                 let next = consumers
                     .get(*tensor)
@@ -583,6 +659,12 @@ fn spill_until_fit(
         let Some((tensor, bytes)) = victim else {
             return Ok(false);
         };
+        planned_used = checked_sub(planned_used, bytes, "planned scratchpad spill release")?;
+        selected.insert(tensor.clone());
+        victims.push((tensor, bytes));
+    }
+
+    for (tensor, bytes) in victims {
         resident.remove(&tensor);
         spilled.insert(tensor.clone());
         *used = checked_sub(*used, bytes, "scratchpad spill release")?;
@@ -641,18 +723,24 @@ fn recipe_candidate<'a>(
     if !recipe.trusted
         || profile
             .op_rule(&node.domain, &node.op_type)
-            .is_some_and(|rule| !contract_compatible(node, rule, model))
+            .is_some_and(|rule| !contract_compatible(node, rule, model, profile))
     {
         return Ok(None);
     }
-    let mut first = None;
+    if recipe.id.trim().is_empty()
+        || recipe.version.trim().is_empty()
+        || recipe.source.trim().is_empty()
+        || recipe.replacement_ops.is_empty()
+    {
+        return Ok(None);
+    }
     let mut launch_ns = 0_u64;
     let mut compute_ns = 0_u64;
     for replacement in &recipe.replacement_ops {
         let Some(rule) = profile.op_rule(&node.domain, replacement) else {
             return Ok(None);
         };
-        if !contract_compatible(node, rule, model) {
+        if !contract_compatible(node, rule, model, profile) {
             return Ok(None);
         }
         let Some(cost) = rule.npu_cost.as_ref() else {
@@ -661,12 +749,11 @@ fn recipe_candidate<'a>(
         let Some((launch, compute)) = evaluate_cost(cost, node, model, profile)? else {
             return Ok(None);
         };
-        first.get_or_insert(cost);
         launch_ns = checked_add(launch_ns, launch, "replacement recipe launch latency")?;
         compute_ns = checked_add(compute_ns, compute, "replacement recipe compute latency")?;
     }
-    Ok(first.map(|cost| Candidate {
-        cost,
+    Ok(Some(Candidate {
+        kernel_id: None,
         launch_ns,
         compute_ns,
         recipe_id: Some(recipe.id.as_str()),
@@ -793,6 +880,9 @@ fn mac_units(
                 }
                 _ => 1,
             };
+            if group > channels || channels % group != 0 {
+                return Ok(None);
+            }
             Ok(Some(checked_mul(
                 checked_mul(output_elements, channels / group, "convolution MAC units")?,
                 kernel,
@@ -803,7 +893,12 @@ fn mac_units(
     }
 }
 
-fn contract_compatible(node: &NodeInfo, rule: &OpRule, model: &NormalizedModel) -> bool {
+fn contract_compatible(
+    node: &NodeInfo,
+    rule: &OpRule,
+    model: &NormalizedModel,
+    profile: &TargetProfile,
+) -> bool {
     for (ports, names) in [(&rule.input_dtypes, &node.inputs), (&rule.output_dtypes, &node.outputs)] {
         if ports.keys().any(|port| names.get(*port).is_none_or(String::is_empty)) {
             return false;
@@ -818,7 +913,13 @@ fn contract_compatible(node: &NodeInfo, rule: &OpRule, model: &NormalizedModel) 
             }
         }
     }
-    if let Some(max_rank) = rule.max_rank {
+    let effective_max_rank = match (rule.max_rank, profile.shape_max_rank) {
+        (Some(rule), Some(global)) => Some(rule.min(global)),
+        (Some(rule), None) => Some(rule),
+        (None, Some(global)) => Some(global),
+        (None, None) => None,
+    };
+    if let Some(max_rank) = effective_max_rank {
         for name in node
             .inputs
             .iter()
@@ -855,6 +956,15 @@ fn validate_plan_invariants(
     if plan.schema != "edgefit.optimization_plan.v1" {
         return invalid("schema changed");
     }
+    let accelerator = profile.accelerator.as_ref().ok_or("missing accelerator")?;
+    if plan.model_sha256 != model.sha256
+        || plan.target_id != profile.target_id
+        || plan.target_fingerprint != profile.fingerprint
+        || plan.accelerator_id != accelerator.id
+        || plan.confidence != accelerator.confidence
+    {
+        return invalid("model or target identity is inconsistent");
+    }
     if plan.assignments.len() != model.nodes.len()
         || plan
             .assignments
@@ -869,7 +979,6 @@ fn validate_plan_invariants(
     if plan.segments != collect_segments(&plan.assignments) {
         return invalid("segments are not exactly the contiguous NPU runs");
     }
-    let accelerator = profile.accelerator.as_ref().ok_or("missing accelerator")?;
     if plan.peak_scratchpad_bytes > accelerator.scratchpad_bytes {
         return invalid("peak scratchpad exceeds accelerator capacity");
     }
@@ -899,6 +1008,11 @@ fn validate_plan_invariants(
             .ok_or_else(|| {
                 "invalid optimization plan invariant: event is outside every NPU segment".to_string()
             })?;
+        if let Some(previous_segment) = active_segment {
+            if segment_id < previous_segment {
+                return invalid("events are not ordered by NPU segment");
+            }
+        }
         if active_segment != Some(segment_id) {
             active_segment = Some(segment_id);
             spilled.clear();
@@ -927,6 +1041,9 @@ fn validate_plan_invariants(
         }
         transfer_ns = checked_add(transfer_ns, event.latency_ns, "invariant transfer latency")?;
         transfer_bytes = checked_add(transfer_bytes, event.bytes, "invariant transfer bytes")?;
+    }
+    if !accelerator.spill_allowed && plan.spill_bytes != 0 {
+        return invalid("spill bytes are non-zero when spilling is disabled");
     }
     if transfer_ns != plan.transfer_latency_ns
         || transfer_bytes != plan.transfer_bytes
@@ -957,6 +1074,36 @@ fn validate_plan_invariants(
     if proposed != plan.proposed_latency_ns {
         return invalid("proposed latency is inconsistent");
     }
+    let mut baseline_blockers = 0_u64;
+    let mut baseline_latency = Some(0_u64);
+    for node in &model.nodes {
+        let cpu = profile
+            .op_rule(&node.domain, &node.op_type)
+            .filter(|rule| contract_compatible(node, rule, model, profile))
+            .and_then(|rule| rule.cpu_cost.as_ref());
+        let cpu_latency = match cpu {
+            Some(cost) => evaluate_cost(cost, node, model, profile)?.map(|(launch, compute)| {
+                checked_add(launch, compute, "invariant CPU node latency")
+            }).transpose()?,
+            None => None,
+        };
+        if cpu_latency.is_none() {
+            baseline_blockers = checked_add(
+                baseline_blockers,
+                1,
+                "invariant CPU baseline blocker count",
+            )?;
+        }
+        baseline_latency = add_optional_latency(
+            baseline_latency,
+            cpu_latency,
+            "invariant CPU baseline latency",
+        )?;
+    }
+    if plan.baseline_blockers != baseline_blockers || plan.baseline_latency_ns != baseline_latency {
+        return invalid("CPU baseline is inconsistent");
+    }
+
     let blocker_count = u64::try_from(plan.blockers.len())
         .map_err(|_| "arithmetic overflow converting invariant blocker count".to_string())?;
     if blocker_count != plan.proposed_blockers
@@ -967,9 +1114,15 @@ fn validate_plan_invariants(
         return invalid("status, blocker count, or latency state is inconsistent");
     }
     for assignment in &plan.assignments {
+        let node = &model.nodes[assignment.node_index];
         match assignment.device.as_str() {
-            "cpu" | "npu"
+            "cpu"
                 if assignment.kernel_id.is_some()
+                    && assignment.recipe_id.is_none()
+                    && assignment.launch_ns.is_some()
+                    && assignment.compute_ns.is_some() => {}
+            "npu"
+                if (assignment.kernel_id.is_some() ^ assignment.recipe_id.is_some())
                     && assignment.launch_ns.is_some()
                     && assignment.compute_ns.is_some() => {}
             "unsupported"
@@ -985,6 +1138,70 @@ fn validate_plan_invariants(
         if assignment.device != "npu" && assignment.recipe_id.is_some() {
             return invalid("recipe is attached to a non-NPU assignment");
         }
+        if assignment.device == "cpu" {
+            let candidate = match profile
+                .op_rule(&node.domain, &node.op_type)
+                .filter(|rule| contract_compatible(node, rule, model, profile))
+                .and_then(|rule| rule.cpu_cost.as_ref())
+            {
+                Some(cost) => evaluate_cost(cost, node, model, profile)?.map(|(launch, compute)| {
+                    (cost.id.as_str(), launch, compute)
+                }),
+                None => None,
+            };
+            if !candidate.is_some_and(|(kernel, launch, compute)| {
+                assignment.kernel_id.as_deref() == Some(kernel)
+                    && assignment.launch_ns == Some(launch)
+                    && assignment.compute_ns == Some(compute)
+            }) {
+                return invalid("CPU assignment does not satisfy its kernel contract");
+            }
+        } else if assignment.device == "npu" {
+            let direct = match profile
+                .op_rule(&node.domain, &node.op_type)
+                .filter(|rule| contract_compatible(node, rule, model, profile))
+                .and_then(|rule| rule.npu_cost.as_ref())
+            {
+                Some(cost) => evaluate_cost(cost, node, model, profile)?.map(|(launch, compute)| {
+                    (cost.id.as_str(), launch, compute)
+                }),
+                None => None,
+            };
+            let direct_valid = direct.is_some_and(|(kernel, launch, compute)| {
+                assignment.kernel_id.as_deref() == Some(kernel)
+                    && assignment.launch_ns == Some(launch)
+                    && assignment.compute_ns == Some(compute)
+            });
+            let recipe = match assignment.recipe_id.as_deref().and_then(|recipe_id| {
+                profile
+                    .replacement_recipes
+                    .get(&(node.domain.clone(), node.op_type.clone()))
+                    .filter(|recipe| recipe.id == recipe_id)
+            }) {
+                Some(recipe) => recipe_candidate(recipe, node, model, profile)?,
+                None => None,
+            };
+            let recipe_valid = recipe.is_some_and(|candidate| {
+                assignment.kernel_id.is_none()
+                    && assignment.recipe_id.as_deref() == candidate.recipe_id
+                    && assignment.launch_ns == Some(candidate.launch_ns)
+                    && assignment.compute_ns == Some(candidate.compute_ns)
+            });
+            if !direct_valid && !recipe_valid {
+                return invalid("NPU assignment does not satisfy a kernel or recipe contract");
+            }
+        }
+    }
+    if plan.plan_hash
+        != plan_fingerprint(
+            &plan.model_sha256,
+            &plan.target_fingerprint,
+            &plan.assignments,
+            &plan.segments,
+            &plan.events,
+        )
+    {
+        return invalid("plan hash is inconsistent");
     }
     Ok(())
 }
@@ -1368,6 +1585,88 @@ mod tests {
         assert_eq!(plan.assignments[0].device, "cpu");
         assert!(plan.segments.is_empty());
         assert!(plan.events.is_empty());
+    }
+
+    #[test]
+    fn contract_mismatch_does_not_bypass_cpu_fallback() {
+        let mut model = parse_model(&[("Relu", &["x"], &["y"])]);
+        model.tensors.get_mut("x").unwrap().dtype = Some("float32".to_string());
+        model.tensors.get_mut("y").unwrap().dtype = Some("float32".to_string());
+        let profile = parse_test_profile(262_144, true, 10_000, 10_000, 1);
+
+        let plan = optimize(&model, &profile).unwrap();
+
+        assert_eq!(plan.status, "fail");
+        assert_eq!(plan.assignments[0].device, "unsupported");
+        assert_eq!(plan.baseline_blockers, 1);
+        assert!(plan.blockers.contains(&"node:0 unsupported".to_string()));
+    }
+
+    #[test]
+    fn port_dtype_override_and_rank_limit_fail_closed() {
+        let model = parse_model(&[("Add", &["x", "bias"], &["y"])]);
+        let mut profile = parse_test_profile(262_144, true, 10_000, 10_000, 1);
+        let rule = profile
+            .allowed_ops
+            .get_mut(&("ai.onnx".to_string(), "Add".to_string()))
+            .unwrap();
+        rule.input_dtypes.insert(1, ["float32".to_string()].into());
+        rule.max_rank = Some(1);
+
+        let plan = optimize(&model, &profile).unwrap();
+
+        assert_eq!(plan.status, "fail");
+        assert_eq!(plan.assignments[0].device, "unsupported");
+    }
+
+    #[test]
+    fn workspace_pressure_is_a_canonical_capacity_failure() {
+        let model = parse_model(&[("Relu", &["x"], &["y"])]);
+        let mut profile = parse_test_profile(4_096, false, 10_000, 10_000, 1);
+        profile
+            .allowed_ops
+            .get_mut(&("ai.onnx".to_string(), "Relu".to_string()))
+            .unwrap()
+            .workspace_bytes = 4_096;
+
+        let plan = optimize(&model, &profile).unwrap();
+
+        assert_eq!(plan.status, "fail");
+        assert!(plan
+            .blockers
+            .iter()
+            .any(|blocker| blocker.contains("workspace scratchpad_unavailable")));
+        assert!(plan.peak_scratchpad_bytes <= 4_096);
+    }
+
+    #[test]
+    fn known_cpu_baseline_wins_when_mixed_plan_is_not_faster() {
+        let model = parse_model(&[("Relu", &["x"], &["y"])]);
+        let profile = parse_test_profile(262_144, true, 1, 1, 100_000);
+
+        let plan = optimize(&model, &profile).unwrap();
+
+        assert_eq!(plan.proposed_blockers, 0);
+        assert_eq!(plan.proposed_latency_ns, plan.baseline_latency_ns);
+        assert_eq!(plan.assignments[0].device, "cpu");
+    }
+
+    #[test]
+    fn arithmetic_overflow_is_an_execution_error() {
+        let model = parse_model(&[("Relu", &["x"], &["y"])]);
+        let mut profile = parse_test_profile(262_144, true, 10_000, 10_000, 1);
+        let cost = profile
+            .allowed_ops
+            .get_mut(&("ai.onnx".to_string(), "Relu".to_string()))
+            .unwrap()
+            .cpu_cost
+            .as_mut()
+            .unwrap();
+        cost.fixed_ns = u64::MAX;
+
+        let error = optimize(&model, &profile).unwrap_err();
+
+        assert!(error.contains("arithmetic overflow"));
     }
 
     fn parse_model(nodes: &[(&str, &[&str], &[&str])]) -> NormalizedModel {

@@ -1,5 +1,17 @@
 # EdgeFit 竞品基准
 
+## 文档与实现边界
+
+本文描述 `tools/competitive-benchmark/benchmark.py` 当前实现的证据契约，
+不是独立于源码的承诺，也不把一次成功运行扩大解释为设备部署结论。对
+EdgeFit CLI 本身，`docs/CLI_CONTRACT.md` 中的 `0` / `1` / `2` 退出码与机器
+schema 契约优先；本编排器还必须把退出码、artifact 类型、artifact 内部状态和
+清单期望联合校验，任何一项矛盾都不得形成完成证据。
+
+本文中的“完整”只表示：所选工具和案例满足下文的完整契约门槛，并且所引用
+工件可按记录的路径、字节数和 SHA-256 追溯。它不表示模型精度、真实设备内存、
+固件集成、运行时兼容性、推理延迟、吞吐、功耗或生产可用性已经得到证明。
+
 ## 目的
 
 这套基准用于回答“EdgeFit 相比现有 ONNX 分析工具多解决了什么问题”，而不是通过自定义总分宣布 EdgeFit 获胜。第一阶段固定比较三项本地工具：
@@ -119,6 +131,155 @@ EdgeFit 的 9 个已完成案例为 209–246 ms，onnx-tool 的案例为 198–
 Mobile Checker 除控制流失败案例外为 241–315 ms；三者工作内容不同，这些数字
 只用于发现数量级回退，不用于产品排名。
 
+## 严格解析契约
+
+基准不会把“子进程结束”直接当作“结果可用”。适配器只接受其明确支持的结构，
+且布尔值不能冒充整数。已知字段以外的扩展字段可以保留，但不能替代任何必需
+字段，也不能修复字段之间的矛盾。
+
+### EdgeFit `check` 报告
+
+`edgefit.report.v1` 至少必须满足以下条件，才可形成 `completed` 证据：
+
+- 根对象的 `schema` 必须精确等于 `edgefit.report.v1`，`status` 必须是
+  `pass` 或 `fail`。
+- `metrics` 必须是对象，`diagnostics` 必须是数组。
+- `estimated_peak_activation_bytes`、`planned_activation_arena_bytes` 和
+  `activation_tensor_alignment_bytes` 必须存在且为整数。
+- `activation_planner_algorithm` 必须是非空字符串，
+  `activation_planning_overflowed` 必须是布尔值。
+
+解析器随后只提取有既定语义的指标。可选字段缺失时保持缺失，不能补零、猜测
+或从 stdout 文本反推。
+
+### EdgeFit `optimize` 计划
+
+`edgefit.optimization_plan.v1` 使用更强的结构与交叉字段校验：
+
+- `status` 只能是 `pass` 或 `fail`；`assignments`、`segments`、`events`、
+  `blockers` 必须是数组。
+- 模型哈希、target 身份与指纹、accelerator 身份和 confidence 必须是非空
+  字符串；`plan_hash` 必须匹配 `fnv1a64:` 加 16 个十六进制字符。
+- assignment 的 `node_index` 必须从零开始、连续且唯一。设备只能是 `cpu`、
+  `npu` 或 `unsupported`；可执行 assignment 必须有 kernel 和非负 latency，
+  非 NPU assignment 不能声明 recipe。
+- segment ID 必须从零连续，范围必须有效、递增且不重叠，并且必须精确等于
+  assignments 中所有最大连续 NPU 区间。
+- event kind 只能是 `load`、`store`、`spill` 或 `reload`；tensor 必须非空，
+  bytes 必须为正整数，节点索引必须在 assignment 范围内，latency 必须为非负
+  整数。
+- `proposed.blockers` 必须等于 blocker 数组长度；无 blocker 时 status 必须为
+  `pass`，存在 blocker 时必须为 `fail`。
+- `transfer_bytes`、`transfer_ns` 和 `spill_bytes` 必须分别等于 event 明细重算
+  结果；可计算的 proposed latency 必须等于 launch、compute 与 transfer latency
+  之和。
+
+任一缺失字段、错误类型、非法枚举、索引断裂、segment 不一致、汇总不守恒或
+status/blocker 矛盾都会把该运行降为 `runner_error`，而不是保留一份看似成功的
+优化证据。
+
+### 竞品输出
+
+- ORT Mobile Checker 只从其文本输出中提取明确匹配的 recommendation、partition、
+  unsupported-op 和 dynamic-shape 记录。未匹配到字段不等于零覆盖率或支持。
+- onnx-tool CSV 必须可读取，包含 `Name` 列和 `Total` 行；缺少这些结构时为
+  `runner_error`。数值只在完整匹配已支持的带单位整数格式时提取，否则保持空值。
+- 竞品工具返回非接受退出码时，可以形成 `tool_rejected` 边界证据，但其文本不得
+  被提升为与成功机器工件等价的结构化结论。
+
+## 退出码与工件一致性
+
+EdgeFit 的公共 CLI 契约是：`0` 表示 gate pass，`1` 表示分析或规划完成但 policy
+gate fail，`2` 表示无法产生可信 gate 结果。基准层必须进一步验证以下一致性：
+
+| 命令结果 | 允许的 CLI 退出码 | 必需机器工件 | 工件内部状态 | 基准分类 |
+| --- | ---: | --- | --- | --- |
+| `check` 通过 | `0` | `edgefit.report.v1` | `status = pass` | `completed` |
+| `check` 策略失败 | `1` | `edgefit.report.v1` | `status = fail` | `completed` |
+| `optimize` 通过 | `0` | `edgefit.optimization_plan.v1` | `status = pass` 且无 blocker | `completed` |
+| `optimize` 有 blocker | `1` | `edgefit.optimization_plan.v1` | `status = fail` 且 blocker 非空 | `completed` |
+| 执行失败 | `2` | 若请求机器输出，则为 `edgefit.execution_error.v1` | `status = execution_error` | 不完整；不得当作 policy fail |
+
+对 EdgeFit 来说，只有退出码和规范工件同意才算一致。以下情况必须拒绝：
+
+- 退出 `0` 但报告或计划为 `fail`；
+- 退出 `1` 但报告或计划为 `pass`；
+- 退出 `0`/`1` 却写出 `edgefit.execution_error.v1`；
+- 退出 `2` 却把普通 report/plan 当作可信结果；
+- 请求的 artifact 缺失、损坏、schema 错误或内部交叉字段不一致；
+- 重复运行产生不同退出码，或应确定性的 artifact SHA-256 不一致。
+
+当前编排器把 EdgeFit `0` 和 `1` 都列为可解析完成码，并由报告/计划解析器校验
+工件内部结构；完整契约门槛应同时包含上表的退出码—状态对应关系。任何只检查
+“退出码属于 `{0,1}`”或只检查“JSON 可解析”的结果，都不能称为完整契约证据。
+
+## Fail-closed 情形
+
+以下情况不会被解释为通过，也不会以缺失值代替事实：
+
+- manifest、corpus 或结果 JSON 无法读取、不是对象、schema 不匹配，或必填文本
+  为空；
+- `--tools` 为空、重复或含未知工具，`--case-id` 重复或未知，timeout/repetition
+  超出允许范围；
+- 案例 ID 非法或重复，模型来源不是且只能是 corpus ID、直接 fixture、生成规格
+  三者之一；
+- target 不存在，corpus model 缓存缺失，模型字节数或 SHA-256 与清单不符；
+- 生成图规格超界、dtype/op 不受支持，或生成文件事实与声明不一致；
+- 工具不可用、依赖缺失、超时、启动失败、GNU time 未给出唯一 RSS 记录；
+- 成功进程没有写请求工件，工件不可解析，重复 artifact 不确定，或重复退出码
+  不一致；
+- expectation 所需观测缺失。例如声明 RSS 上限但未测得 RSS 时，该检查失败，
+  不能把 `null` 当作 `0`；
+- comparison 任一 EdgeFit 侧不是 `completed`，或比较指标不是整数；此时不计算
+  数值差异或比例；
+- optimizer 的 blocker、event、segment、latency 或汇总值不自洽。
+
+工具明确拒绝模型是可保留的边界证据；基础设施缺失、超时和 runner/parser 错误
+不是拒绝证据。前者可以参与完整矩阵，后者必须使结果不完整。
+
+## 完整契约门槛
+
+结果顶层只有在下列条件全部成立时才可标记为 `complete`，编排器进程才返回 `0`：
+
+1. 每个所选工具的版本探针均为 `completed`，并记录版本探针命令和结果。
+2. 所有模型在启动任何被比较工具前已通过来源、字节数和 SHA-256 预检。
+3. 每个所选案例、每个所选工具都得到 `completed` 或 `tool_rejected`；不存在
+   `unavailable`、`timed_out` 或 `runner_error`。
+4. 每个 EdgeFit 案例符合清单声明的预期边界，并满足退出码、schema、内部 status
+   与 report/plan 内容的一致性。
+5. 每项 case expectation 都通过；需要的 duration、RSS、node count、determinism、
+   assignment、segment、event、spill、transfer、scratchpad、blocker、recipe 或
+   latency 观测不得缺失。
+6. 每项 before/after comparison 都来自同一次固定清单运行，双方均有完成的
+   EdgeFit 证据，且可比较字段通过类型检查。
+7. 所有纳入结论的原始输出和机器工件均记录路径、字节数和 SHA-256；重复运行的
+   样本、退出码和 artifact hash 保留在结果中。
+
+任一条件不成立时，顶层为 `incomplete`，编排器返回 `1`。manifest 或参数等输入
+错误使编排器无法形成结果时返回 `2`。编排器的 `0`/`1`/`2` 表示“证据套件完整 /
+证据套件不完整 / 编排输入错误”，不要与被测 EdgeFit 子进程的 CLI `0`/`1`/`2`
+混为一谈。
+
+## 证据边界
+
+每条结论必须绑定到具体证据层级，不得跨层外推：
+
+| 证据 | 可以支持 | 不能支持 |
+| --- | --- | --- |
+| corpus manifest + 文件预检 | 本次使用了指定字节与 SHA-256 的模型 | 模型来源之外的正确性、代表性或许可判断 |
+| 原始 stdout/stderr + 退出码 | 工具在该环境中的实际接受、拒绝或失败行为 | 未输出字段的默认值，或其他版本/平台行为 |
+| EdgeFit report/plan | 指定模型与 target contract 下的静态 gate、诊断或模拟计划 | 固件、runtime、设备内存、精度、功耗或真实 latency |
+| 托管 duration/RSS | 该 runner 上完整 CLI 进程的观测 | 设备推理性能、跨平台排名或算法级微基准 |
+| ORT Mobile Checker 输出 | 被检查 ORT EP 场景的适用性与分区估计 | 非 ORT runtime、厂商编译器或设备执行结果 |
+| onnx-tool CSV | 该工具定义下的 MACs、参数与逐节点求和内存 | peak activation、EdgeFit arena 或真实设备峰值 |
+| 单输入 ORT 等价性 | 记录输入上的接口与元素级结果一致 | 数据集精度、鲁棒性或设备 runtime 等价性 |
+| simulated optimizer profile | 声明成本模型下的 assignment、transfer、spill 与计划比较 | 实测 NPU/CPU latency、DMA、带宽或可部署性 |
+
+公开 Artifact 可以包含摘要、原始文本、机器报告、生成模型和哈希记录；未上传的
+模型二进制只能由 manifest、下载阶段校验和工作流日志间接追溯。链接到成功的
+GitHub Actions run 证明该提交上的工作流完成，不自动证明后续提交、其他平台、
+其他依赖版本或真实硬件具有相同结果。
+
 ## 为什么不直接比较“谁通过了更多模型”
 
 三个工具回答的问题不同：
@@ -193,7 +354,7 @@ HardSwish 线性图，并引用仅用于测试的分段和小 scratchpad profile
 解析器要求 `edgefit.optimization_plan.v1`、完整 assignments/segments/events、
 非空 `plan_hash` 和非负 transfer/spill/scratchpad 指标；缺失字段会使证据失败。
 
-普通 PR 在 GitHub runner 上重复三次 10K-node optimize；手动
+普通 PR 在 GitHub runner 上重复三次 10K-node optimize 契约门禁；手动
 `.github/workflows/optimizer-evidence.yml` 重复五次完整的 1K/10K/100K、recipe、
 CPU/NPU 分段、spill/reload 和 no-spill blocker 案例。输出中的 optimizer
 latency 仍完全来自 simulated profile。托管 duration 与 RSS 只表示完整 CLI
@@ -230,13 +391,26 @@ tmp/competitive_benchmark/
 
 结果状态含义：
 
-- `completed`：工具以该适配器允许的退出码完成，所需报告也可解析。
+- `completed`：工具以该适配器允许的退出码完成，所需工件通过严格解析，并且
+  退出码与工件语义一致。
 - `tool_rejected`：工具已实际运行，但拒绝或无法分析该模型；这是有效的竞品边界证据。
 - `unavailable`：二进制或 Python 包不可用。
 - `timed_out`：超过单工具单案例超时。
 - `runner_error`：工具声称完成，但缺失或损坏了约定输出。
 
-只有三个工具的版本探针都有结果，且所有案例都得到 `completed` 或 `tool_rejected` 证据时，整套结果才标记为 `complete`。
+`runner_error` 还包括重复退出码或 artifact 不一致、schema/字段/类型错误、
+report/plan 内部不守恒，以及退出码与工件状态矛盾。
+
+顶层编排器退出码：
+
+| Code | 含义 |
+| ---: | --- |
+| `0` | 证据结果已写出，且完整契约门槛全部通过。 |
+| `1` | 证据结果已写出，但至少一个完整性、期望或比较门槛失败。 |
+| `2` | manifest、参数或前置输入无效，无法形成可信证据结果。 |
+
+只有所选工具的版本探针都有结果，且所有案例、退出一致性、严格解析、清单期望、
+比较和 artifact 记录全部满足时，整套结果才标记为 `complete`。
 
 ## 复杂度
 
