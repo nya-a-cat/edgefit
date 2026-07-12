@@ -235,7 +235,7 @@
         "expected_plan_segment_count": 1,
         "max_plan_spill_bytes": 0,
         "max_plan_peak_scratchpad_bytes": 3072,
-        "required_plan_blockers": ["node:2 scratchpad_exceeded", "node:2 tensor:d scratchpad_unavailable"],
+        "required_plan_blockers": ["node:2 tensor:d scratchpad_unavailable spill_disabled"],
         "expected_plan_recipe_ids": []
       }
     }
