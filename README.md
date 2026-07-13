@@ -267,6 +267,15 @@ latency, throughput, power, firmware, or real-hardware memory measurements. The
 [successful maturity run](https://github.com/nya-a-cat/edgefit/actions/runs/29103544134)
 and fixed manifests under `tools/competitive-benchmark/` retain the evidence.
 
+The author-maintained
+[`edgefit-action-demo`](https://github.com/nya-a-cat/edgefit-action-demo)
+template separately validates the external-consumer path. Its
+[passing PR](https://github.com/nya-a-cat/edgefit-action-demo/pull/1) and
+[model-only budget regression](https://github.com/nya-a-cat/edgefit-action-demo/pull/2)
+use the published `v0.5.0-alpha.1` Action pinned to a complete commit SHA and
+retain SARIF plus Markdown evidence. This proves distribution and CI behavior;
+it is not independent adoption or hardware validation.
+
 ## Command Surface
 
 ```text
@@ -310,6 +319,8 @@ dependency.
   it is not empirical calibration or device evidence.
 - Calibration packs provide file integrity, not signatures, device attestation,
   or proof that the measurements came from the declared hardware.
+- The reference consumer repository is maintained by the EdgeFit author;
+  independent external adoption has not been observed.
 - Passing verification or optimization planning does not establish firmware,
   runtime, power, or real-device memory compatibility.
 - Direct ONNX normalization rejects nested subgraphs, local functions, and sparse
